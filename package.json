@@ -1,0 +1,58 @@
+{
+  "name": "cashlab",
+  "version": "0.0.1",
+  "description": "A module to write, inspect & validate bch contracts/transactions.",
+  "type": "module",
+  "main": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "scripts": {
+    "build": "tsc -p config/tsconfig.json",
+    "test": "c8 ava",
+    "doc": "npm run doc:html && npm run doc:extract && npm run doc:generate",
+    "doc:html": "typedoc src/index.ts --out build/docs",
+    "doc:extract": "mkdir -p build/api && api-extractor run --local",
+    "doc:generate": "api-documenter markdown -i temp -o build/api/markdown"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hosseinzoda/bchpowder.git"
+  },
+  "keywords": [
+    "BCH",
+    "defi"
+  ],
+  "author": "Hossein Zoda",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hosseinzoda/bchpowder/issues"
+  },
+  "homepage": "https://github.com/hosseinzoda/bchpowder#readme",
+  "devDependencies": {
+    "@ava/typescript": "^4.1.0",
+    "@microsoft/api-documenter": "^7.24.2",
+    "@microsoft/api-extractor": "^7.43.1",
+    "ava": "^6.1.2",
+    "c8": "^9.1.0",
+    "typedoc": "^0.25.13",
+    "typescript": "^5.4.5"
+  },
+  "ava": {
+    "typescript": {
+      "rewritePaths": {
+        "src/": "build/"
+      },
+      "compile": false
+    }
+  },
+  "c8": {
+    "exclude": [
+      "**/tests/*.js"
+    ]
+  },
+  "dependencies": {
+    "@bitauth/libauth": "^3.0.0"
+  },
+  "volta": {
+    "node": "20.12.2"
+  }
+}

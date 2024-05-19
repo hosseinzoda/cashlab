@@ -1,0 +1,106 @@
+{
+  "$schema": "https://ide.bitauth.com/authentication-template-v0.schema.json",
+  "description": "",
+  "name": "cauldron",
+  "entities": {
+    "pool_owner": {
+      "description": "",
+      "name": "Pool owner",
+      "scripts": [
+        "cauldron_poolv0",
+        "withdraw_cauldron_poolv0"
+      ],
+      "variables": {
+        "pool_owner_key": {
+          "description": "",
+          "name": "owner's Key",
+          "type": "Key"
+        },
+        "pool_owner_public_key_hash160": {
+          "description": "",
+          "name": "Hash of pool's withdrawal public key",
+          "type": "AddressData"
+        }
+      }
+    },
+    "user": {
+      "description": "",
+      "name": "User",
+      "variables": {
+        "user_key": {
+          "description": "",
+          "name": "User's Key",
+          "type": "Key"
+        }
+      }
+    }
+  },
+  "scenarios": {
+    "main": {
+      "description": "A typical cauldron spending",
+      "name": "Main Scenario",
+      "transaction": {
+        "outputs": [
+          {
+            "lockingBytecode": {
+              "script": [
+                "copy"
+              ]
+            },
+            "token": {
+              "category": "d9ab24ed15a7846cc3d9e004aa5cb976860f13dac1ead05784ee4f4622af96ea",
+              "amount": 9000
+            },
+            "valueSatoshis": 11115
+          }
+        ]
+      },
+      "sourceOutputs": [
+        {
+          "lockingBytecode": [
+            "slot"
+          ],
+          "token": {
+            "category": "d9ab24ed15a7846cc3d9e004aa5cb976860f13dac1ead05784ee4f4622af96ea",
+            "amount": 10000
+          },
+          "valueSatoshis": 10000
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "withdraw_cauldron_poolv0": {
+      "name": "Withdraw",
+      "script": "<pool_owner_key.schnorr_signature.all_outputs>\n<pool_owner_key.public_key>",
+      "unlocks": "cauldron_poolv0"
+    },
+    "cauldron_poolv0_exchange": {
+      "passes": [
+        "main"
+      ],
+      "name": "Exchange",
+      "script": "",
+      "unlocks": "cauldron_poolv0"
+    },
+    "cauldron_poolv0": {
+      "lockingType": "p2sh32",
+      "name": "Cauldron pool",
+      "script": "\n// If there is an input, it must be a pubkey and signature.\n// This means that the owner wants to withdraw the contract.\nOP_DEPTH\nOP_IF\n// withdraw\n  OP_DUP\n  OP_HASH160\n  <pool_owner_public_key_hash160>\n  OP_EQUALVERIFY\n  OP_CHECKSIG\nOP_ELSE\n  // exchange\n  // Verify it is the correct category ID.\n  OP_INPUTINDEX\n  OP_OUTPUTTOKENCATEGORY\n  OP_INPUTINDEX\n  OP_UTXOTOKENCATEGORY\n  OP_EQUALVERIFY\n  // Enforce version 2\n  // Enforcing version is to make sure that tools that\n  // use this contract stay compatible, when and if\n  // transaction format changes in the future.\n  OP_TXVERSION\n  <2>\n  OP_EQUALVERIFY\n\n  // Verify that this contract lives on on the output with\n  // the same input as this contract.\n  OP_INPUTINDEX\n  OP_OUTPUTBYTECODE\n  OP_INPUTINDEX\n  OP_UTXOBYTECODE\n  OP_EQUALVERIFY\n\n  // Calculate target K\n  OP_INPUTINDEX\n  OP_UTXOVALUE\n  OP_INPUTINDEX\n  OP_UTXOTOKENAMOUNT\n  OP_MUL\n  // On stack: K\n  // Calculate fee for trade. Fee is ~0.3%.\n  // (abs(bch out - bch in) * 3) / 1000\n  OP_INPUTINDEX\n  OP_UTXOVALUE\n  OP_INPUTINDEX\n  OP_OUTPUTVALUE\n  OP_SUB\n  OP_ABS\n  <3>\n  OP_MUL\n  <1000>\n  OP_DIV\n  // On stack: BCH FEE, target K\n  // Get effective output K when including the fee.\n  OP_INPUTINDEX\n  OP_OUTPUTVALUE\n  // Subtract fee\n  OP_SWAP\n  OP_SUB\n  OP_INPUTINDEX\n  OP_OUTPUTTOKENAMOUNT\n  OP_MUL\n  // Verify that effective K >= target K\n  OP_SWAP\n  OP_GREATERTHANOREQUAL\nOP_ENDIF\n"
+    },
+    "p2pkh": {
+      "lockingType": "standard",
+      "name": "P2PKH funding",
+      "script": "OP_DUP\nOP_HASH160 <$(<user_key.public_key> OP_HASH160\n)> OP_EQUALVERIFY\nOP_CHECKSIG"
+    },
+    "p2pkh_unlock": {
+      "name": "Unlock",
+      "script": "<user_key.schnorr_signature.all_outputs>\n<user_key.public_key>",
+      "unlocks": "p2pkh"
+    }
+  },
+  "supported": [
+    "BCH_2023_05"
+  ],
+  "version": 0
+}
