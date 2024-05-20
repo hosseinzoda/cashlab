@@ -477,7 +477,7 @@ const generateExchangeTx = (compiler: libauth.CompilerBCH, input_pool_trade_list
   };
 };
 
-const buildPayoutOutputs = (lab: CauldronPoolExchangeLab, payout_rules: PayoutRule[], aggregate_payout_list: Array<{ token_id: TokenId, amount: bigint }>, txfee: bigint, verify_payouts_are_paid: boolean): Output[] => {
+const buildPayoutOutputs = (lab: ExchangeLab, payout_rules: PayoutRule[], aggregate_payout_list: Array<{ token_id: TokenId, amount: bigint }>, txfee: bigint, verify_payouts_are_paid: boolean): Output[] => {
   aggregate_payout_list = structuredClone(aggregate_payout_list);
   const payout_outputs: Output[] = [];
   const payout_type_precedence = Object.fromEntries([
@@ -645,7 +645,48 @@ const buildPayoutOutputs = (lab: CauldronPoolExchangeLab, payout_rules: PayoutRu
   return payout_outputs;
 };
 
-export default class CauldronPoolExchangeLab {
+const prepareForARequestToConstructTrade = (supply_token_id: TokenId, demand_token_id: TokenId, input_pools: PoolV0[]): { pools_pair: Array<{ a: bigint, b: bigint, fee_paid_in_a: boolean, pool: PoolV0 }> } => {
+  const pools_pair: Array<{ a: bigint, b: bigint, fee_paid_in_a: boolean, pool: PoolV0 }> = [];
+  if (demand_token_id == NATIVE_BCH_TOKEN_ID) {
+    for (const pool of input_pools) {
+      pools_pair.push({
+        a: pool.output.token.amount,
+        b: pool.output.amount,
+        fee_paid_in_a: false,
+        pool,
+      })
+    }
+  } else {
+    for (const pool of input_pools) {
+      pools_pair.push({
+        a: pool.output.amount,
+        b: pool.output.token.amount,
+        fee_paid_in_a: true,
+        pool,
+      })
+    }
+  }
+  input_pools.forEach((pool) => {
+    if (supply_token_id == NATIVE_BCH_TOKEN_ID) {
+      if (demand_token_id == NATIVE_BCH_TOKEN_ID) {
+        throw new ValueError('either demand_token_id or supply_token_id should be NATIVE_BCH_TOKEN_ID')
+      }
+      if (demand_token_id != pool.output?.token?.token_id) {
+        throw new ValueError('expecting all input_pools to have token with the token_id equal to demand_token_id: ' + demand_token_id)
+      }
+    } else {
+      if (demand_token_id != NATIVE_BCH_TOKEN_ID) {
+        throw new ValueError('either demand_token_id or supply_token_id should be NATIVE_BCH_TOKEN_ID')
+      }
+      if (supply_token_id != pool.output?.token?.token_id) {
+        throw new ValueError('expecting all input_pools to have token with the token_id equal to supply_token_id: ' + supply_token_id)
+      }
+    }
+  });
+  return { pools_pair };
+};
+
+export default class ExchangeLab {
   _rate_denominator: bigint;
   _template: libauth.WalletTemplate;
   _compiler: libauth.CompilerBCH;
@@ -681,50 +722,37 @@ export default class CauldronPoolExchangeLab {
     };
     return libauth.getDustThreshold(lauth_output);
   }
-  /*
-    Calculate available amount that can be taken from given input_pools at the given rate up to max_budget,
-    trading the pair token for given token_id (buying token_id).
-    result pools are sorted by amount in descending order
-   */
-  availableAmountToTradeForTargetAvgRate (supply_token_id: TokenId, demand_token_id: TokenId, rate: Fraction, input_pools: PoolV0[]): TradeResult | null {
+  constructTradeAvailableAmountBelowTargetRate (supply_token_id: TokenId, demand_token_id: TokenId, rate: Fraction, input_pools: PoolV0[]): TradeResult | null {
     const target_rate = convertFractionDenominator(rate, this._rate_denominator);
-    const pools_pair: Array<{ a: bigint, b: bigint, fee_paid_in_a: boolean, pool: PoolV0 }> = [];
-    if (demand_token_id == NATIVE_BCH_TOKEN_ID) {
-      for (const pool of input_pools) {
-        pools_pair.push({
-          a: pool.output.token.amount,
-          b: pool.output.amount,
-          fee_paid_in_a: false,
-          pool,
-        })
-      }
-    } else {
-      for (const pool of input_pools) {
-        pools_pair.push({
-          a: pool.output.amount,
-          b: pool.output.token.amount,
-          fee_paid_in_a: true,
-          pool,
-        })
+    const { pools_pair } = prepareForARequestToConstructTrade(supply_token_id, demand_token_id, input_pools);
+    const result_entries: PoolTrade[] = [];
+    for (const pool_pair of pools_pair) {
+      const lower_bound = 1n;
+      const upper_bound = pool_pair.b;
+      const trade = approxAvailableAmountInAPairAtTargetRate(pool_pair, target_rate, lower_bound, upper_bound);
+      if (trade != null && trade.demand > 0n) {
+        result_entries.push({
+          pool: pool_pair.pool,
+          supply_token_id, demand_token_id,
+          supply: trade.supply,
+          demand: trade.demand,
+          trade_fee: trade.trade_fee,
+        });
       }
     }
-    input_pools.forEach((pool) => {
-      if (supply_token_id == NATIVE_BCH_TOKEN_ID) {
-        if (demand_token_id == NATIVE_BCH_TOKEN_ID) {
-          throw new ValueError('either demand_token_id or supply_token_id should be NATIVE_BCH_TOKEN_ID')
-        }
-        if (demand_token_id != pool.output?.token?.token_id) {
-          throw new ValueError('expecting all input_pools to have token with the token_id equal to demand_token_id: ' + demand_token_id)
-        }
-      } else {
-        if (demand_token_id != NATIVE_BCH_TOKEN_ID) {
-          throw new ValueError('either demand_token_id or supply_token_id should be NATIVE_BCH_TOKEN_ID')
-        }
-        if (supply_token_id != pool.output?.token?.token_id) {
-          throw new ValueError('expecting all input_pools to have token with the token_id equal to supply_token_id: ' + supply_token_id)
-        }
-      }
-    });
+    // sort pools by its liquidity depth in descending order
+    bigIntArraySortPolyfill(result_entries, (a, b) => b.demand - a.demand);
+    return result_entries.length > 0 ? {
+      entries: result_entries,
+      summary: calcTradeSummary(result_entries, this._rate_denominator) as TradeSummary,
+    } : null;
+  }
+  /*
+    Calculate available amount that can be taken from input_pools for the target avg rate
+   */
+  constructTradeAvailableAmountForTargetAvgRate (supply_token_id: TokenId, demand_token_id: TokenId, rate: Fraction, input_pools: PoolV0[]): TradeResult | null {
+    const target_rate = convertFractionDenominator(rate, this._rate_denominator);
+    const { pools_pair } = prepareForARequestToConstructTrade(supply_token_id, demand_token_id, input_pools);
     const result_entries: PoolTrade[] = [];
     for (const pool_pair of pools_pair) {
       const lower_bound = 1n;
@@ -747,45 +775,9 @@ export default class CauldronPoolExchangeLab {
       summary: calcTradeSummary(result_entries, this._rate_denominator) as TradeSummary,
     } : null;
   }
-  calculateBestTradeRateForTargetAmount (supply_token_id: TokenId, demand_token_id: TokenId, amount: bigint, input_pools: PoolV0[]): TradeResult {
+  constractTradeBestRateForTargetAmount (supply_token_id: TokenId, demand_token_id: TokenId, amount: bigint, input_pools: PoolV0[]): TradeResult {
     const rate_denominator = this._rate_denominator;
-    const pools_pair: Array<{ a: bigint, b: bigint, fee_paid_in_a: boolean, pool: PoolV0 }> = [];
-    if (demand_token_id == NATIVE_BCH_TOKEN_ID) {
-      for (const pool of input_pools) {
-        pools_pair.push({
-          a: pool.output.token.amount,
-          b: pool.output.amount,
-          fee_paid_in_a: false,
-          pool,
-        })
-      }
-    } else {
-      for (const pool of input_pools) {
-        pools_pair.push({
-          a: pool.output.amount,
-          b: pool.output.token.amount,
-          fee_paid_in_a: true,
-          pool,
-        })
-      }
-    }
-    input_pools.forEach((pool) => {
-      if (supply_token_id == NATIVE_BCH_TOKEN_ID) {
-        if (demand_token_id == NATIVE_BCH_TOKEN_ID) {
-          throw new ValueError('either demand_token_id or supply_token_id should be NATIVE_BCH_TOKEN_ID')
-        }
-        if (demand_token_id != pool.output?.token?.token_id) {
-          throw new ValueError('expecting all input_pools to have token with the token_id equal to demand_token_id: ' + demand_token_id)
-        }
-      } else {
-        if (demand_token_id != NATIVE_BCH_TOKEN_ID) {
-          throw new ValueError('either demand_token_id or supply_token_id should be NATIVE_BCH_TOKEN_ID')
-        }
-        if (supply_token_id != pool.output?.token?.token_id) {
-          throw new ValueError('expecting all input_pools to have token with the token_id equal to supply_token_id: ' + supply_token_id)
-        }
-      }
-    });
+    const { pools_pair } = prepareForARequestToConstructTrade(supply_token_id, demand_token_id, input_pools);
     if (amount <= 0n) {
       throw new ValueError('amount should be greater than zero!')
     }

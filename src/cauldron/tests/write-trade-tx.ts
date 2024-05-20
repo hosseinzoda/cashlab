@@ -1,6 +1,6 @@
 import test from 'ava';
 
-import { CauldronPoolExchangeLab } from '../index.js';
+import { ExchangeLab } from '../index.js';
 import type { PoolV0Parameters, PoolTrade, TradeTxResult  } from '../types.js';
 import type {
   TokenId, SpendableCoinP2PKH, OutputWithFT, Output,
@@ -68,7 +68,7 @@ const verifyPayoutsOfTradeTxResultBasedOnTradePools = (t: any, result: TradeTxRe
 
 test('write a trade tx, test01', (t) => {
 
-  const poolex_lab = new CauldronPoolExchangeLab();
+  const exlab = new ExchangeLab();
 
   const supply_token_id: TokenId = sample_pool_token_id;
   const demand_token_id: TokenId = NATIVE_BCH_TOKEN_ID;
@@ -90,7 +90,7 @@ test('write a trade tx, test01', (t) => {
           txhash: dummy_txhash,
         },
         output: {
-          locking_bytecode: poolex_lab.generatePoolV0LockingBytecode(sample_pool_params),
+          locking_bytecode: exlab.generatePoolV0LockingBytecode(sample_pool_params),
           token: {
             amount: 11n,
             token_id: sample_pool_token_id,
@@ -147,9 +147,9 @@ test('write a trade tx, test01', (t) => {
 
   const txfee_per_byte: bigint = 1n;
 
-  const result: TradeTxResult = poolex_lab.writeTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
+  const result: TradeTxResult = exlab.writeTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
 
-  poolex_lab.verifyTradeTx(result);
+  exlab.verifyTradeTx(result);
 
   // console.log(JSON.stringify(result, (_, a) => typeof a == 'bigint' ? a+'' : (a instanceof Uint8Array ? uint8ArrayToHex(a) : a), '  '));
 
@@ -164,7 +164,7 @@ test('write a trade tx, test01', (t) => {
 
 test.only('write a trade tx, test02', (t) => {
 
-  const poolex_lab = new CauldronPoolExchangeLab();
+  const exlab = new ExchangeLab();
 
   const supply_token_id: TokenId = NATIVE_BCH_TOKEN_ID;
   const demand_token_id: TokenId = sample_pool_token_id;
@@ -186,7 +186,7 @@ test.only('write a trade tx, test02', (t) => {
           txhash: dummy_txhash,
         },
         output: {
-          locking_bytecode: poolex_lab.generatePoolV0LockingBytecode(sample_pool_params),
+          locking_bytecode: exlab.generatePoolV0LockingBytecode(sample_pool_params),
           token: {
             amount: 11n,
             token_id: sample_pool_token_id,
@@ -209,7 +209,7 @@ test.only('write a trade tx, test02', (t) => {
           txhash: dummy_txhash,
         },
         output: {
-          locking_bytecode: poolex_lab.generatePoolV0LockingBytecode(sample_pool_params),
+          locking_bytecode: exlab.generatePoolV0LockingBytecode(sample_pool_params),
           token: {
             amount: 20n,
             token_id: sample_pool_token_id,
@@ -254,10 +254,10 @@ test.only('write a trade tx, test02', (t) => {
 
   const txfee_per_byte: bigint = 1n;
 
-  const result: TradeTxResult = poolex_lab.writeTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
+  const result: TradeTxResult = exlab.writeTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
 
   //console.log(JSON.stringify(result, (_, a) => typeof a == 'bigint' ? a+'' : (a instanceof Uint8Array ? uint8ArrayToHex(a) : a), '  '));
-  poolex_lab.verifyTradeTx(result);
+  exlab.verifyTradeTx(result);
 
   // check fixed payout
   verifyFixedPayouts(t, result, payout_rules);

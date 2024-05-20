@@ -16,7 +16,7 @@ export type PayoutRuleCommon = {
   locking_bytecode: Uint8Array;
 };
 
-export type FIXED_PAYOUT_RULE_APPLY_MIN_AMOUNT = -1n;
+export type FixedPayoutRuleApplyMinAmountType = -1n;
 
 export type PayoutFixedAmountRule = PayoutRuleCommon & {
   type: PayoutAmountRuleType.FIXED;
@@ -24,7 +24,7 @@ export type PayoutFixedAmountRule = PayoutRuleCommon & {
     amount: bigint;
     token_id: string;
   };
-  amount: bigint | FIXED_PAYOUT_RULE_APPLY_MIN_AMOUNT;
+  amount: bigint | FixedPayoutRuleApplyMinAmountType;
 };
 export type PayoutChangeRule = PayoutRuleCommon & {
   type: PayoutAmountRuleType.CHANGE;

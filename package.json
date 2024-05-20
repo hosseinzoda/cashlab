@@ -36,13 +36,26 @@
     "typedoc": "^0.25.13",
     "typescript": "^5.4.5"
   },
+  "files": [
+    "build",
+    "!build/.tsbuildinfo",
+    "!build/**/*.map",
+    "!build/**/tests",
+    "LICENSE",
+    "README.md"
+  ],
   "ava": {
+    "timeout": "60s",
     "typescript": {
       "rewritePaths": {
         "src/": "build/"
       },
       "compile": false
-    }
+    },
+    "nodeArguments": [
+      "--experimental-json-modules",
+      "--disable-warning=ExperimentalWarning"
+    ]
   },
   "c8": {
     "exclude": [
