@@ -3,7 +3,6 @@
 - construct cauldron exchange trades, generate cauldron trade transactions.
 
 
-
 # Cauldron example
 
 ```

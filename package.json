@@ -15,7 +15,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hosseinzoda/bchpowder.git"
+    "url": "git+https://github.com/hosseinzoda/cashlab.git"
   },
   "keywords": [
     "BCH",
@@ -24,9 +24,9 @@
   "author": "Hossein Zoda",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/hosseinzoda/bchpowder/issues"
+    "url": "https://github.com/hosseinzoda/cashlab/issues"
   },
-  "homepage": "https://github.com/hosseinzoda/bchpowder#readme",
+  "homepage": "https://github.com/hosseinzoda/cashlab#readme",
   "devDependencies": {
     "@ava/typescript": "^4.1.0",
     "@microsoft/api-documenter": "^7.24.2",
