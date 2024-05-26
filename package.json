@@ -1,6 +1,6 @@
 {
   "name": "cashlab",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A module to write, inspect & validate bch contracts/transactions.",
   "type": "module",
   "main": "./build/index.js",
@@ -66,6 +66,6 @@
     "@bitauth/libauth": "^3.0.0"
   },
   "volta": {
-    "node": "20.12.2"
+    "node": "20.13.1"
   }
 }
