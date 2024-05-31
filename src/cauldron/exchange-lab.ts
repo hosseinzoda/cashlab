@@ -241,7 +241,7 @@ const fillOrderFromPoolPairsWithStepperFilling = (initial_pair_trade_list: Array
   }
   const pair_trade_list: Array<{ trade: AbstractTrade | null, next_step_trade: any, pair: PoolPair }> = initial_pair_trade_list.map((a) => ({ trade: a.trade, next_step_trade: null, pair: a.pair }));
   let total_available = pair_trade_list.reduce((a, b) => a + bigIntMax(0n, b.pair.b - 1n), 0n);
-  let total_acquired = pair_trade_list.reduce((a, b) => a + (b.trade != null ? b.trade.demand : 0n), 0n);
+  let total_acquired = pair_trade_list.reduce((a, b) => a + (b.trade != null ? b.trade.demand + (!b.pair.fee_paid_in_a ? b.trade.trade_fee : 0n) : 0n), 0n);
   const getStepForPair = (pair: PoolPair): bigint => bigIntMax(1n, bigIntMax(0n, pair.b - 1n) * step_size / total_available)
   while (total_acquired < requested_amount) {
     pair_trade_list.forEach((entry) => {
@@ -260,16 +260,20 @@ const fillOrderFromPoolPairsWithStepperFilling = (initial_pair_trade_list: Array
     // fill from the sorted pairs
     let did_fill = false;
     for (const entry of sub_trade_list) {
-      const next_addition = (entry.next_step_trade.demand as bigint) - (entry.trade != null ? entry.trade.demand : 0n);
+      const next_addition = (entry.next_step_trade.demand as bigint) - (entry.trade != null ? entry.trade.demand : 0n) +
+        (!entry.pair.fee_paid_in_a ? entry.next_step_trade.trade_fee - (entry.trade != null ? entry.trade.trade_fee : 0n) : 0n);
       if (next_addition > 0n) {
         if (next_addition > requested_amount - total_acquired) {
-          const trade_demand = (requested_amount - total_acquired) + (entry.trade != null ? entry.trade.demand : 0n);
+          const trade_demand = (requested_amount - total_acquired) + (entry.trade != null ? entry.trade.demand + (!entry.pair.fee_paid_in_a ? entry.trade.trade_fee : 0n) : 0n);
           const trade = calcTradeToBuyTargetAmountFromAPair(entry.pair, trade_demand);
-          if (trade == null || trade.demand != trade_demand) {
-            throw new InvalidProgramState('trade == null || trade.demand != trade_demand!! (attempt to fill up a trade)')
+          if (trade == null || trade.demand + (!entry.pair.fee_paid_in_a ? trade.trade_fee : 0n) < trade_demand ||
+            (trade.demand + (!entry.pair.fee_paid_in_a ? trade.trade_fee : 0n)) - (entry.trade != null ? entry.trade.demand + (!entry.pair.fee_paid_in_a ? entry.trade.trade_fee : 0n) : 0n) <= 0n) {
+            console.log({trade, entry_trade: entry.trade, trade_demand, requested_amount, total_acquired })
+            throw new InvalidProgramState('trade == null || trade.demand + trade_fee_if_paid_with_demand < trade_demand!! (attempt to fill up a trade)');
           }
+          total_acquired += (trade.demand + (!entry.pair.fee_paid_in_a ? trade.trade_fee : 0n)) -
+            (entry.trade != null ? entry.trade.demand + (!entry.pair.fee_paid_in_a ? entry.trade.trade_fee : 0n) : 0n);
           entry.trade = trade;
-          total_acquired += requested_amount - total_acquired;
         } else {
           entry.trade = {
             demand: entry.next_step_trade.demand as bigint,
@@ -288,11 +292,11 @@ const fillOrderFromPoolPairsWithStepperFilling = (initial_pair_trade_list: Array
       return null;
     }
   }
-  if (total_acquired != pair_trade_list.reduce((a, b) => a + (b.trade ? b.trade.demand : 0n), 0n)) {
+  if (total_acquired != pair_trade_list.reduce((a, b) => a + (b.trade ? b.trade.demand + (!b.pair.fee_paid_in_a ? b.trade.trade_fee : 0n) : 0n), 0n)) {
     throw new InvalidProgramState('total_acquired do not match the sum!! (attempt to add to trade amount)')
   }
-  if (total_acquired != requested_amount) {
-    throw new InvalidProgramState('total_acquired != requested_amount!! (attempt to add to trade amount)')
+  if (total_acquired < requested_amount) {
+    throw new InvalidProgramState('total_acquired < requested_amount!! (attempt to add to trade amount)')
   }
   return pair_trade_list.map((entry) => {
     delete (entry as any).next_step_trade;
@@ -784,6 +788,7 @@ export default class ExchangeLab {
     if (input_pools.length == 0) {
       throw new InsufficientCapitalInPools('Nothing available to trade.', { requires: amount, pools: input_pools });
     }
+    const fee_paid_in_demand = demand_token_id == NATIVE_BCH_TOKEN_ID ? true : false;
     // requested amount is acquired
     // now use the aggregate rate as the base trade and then find the best rate with successive approximation.
     let candidate_aggregate_trade = null;
@@ -805,13 +810,13 @@ export default class ExchangeLab {
           trade: approxAvailableAmountInAPairAtTargetRate(pair, { numerator: guess, denominator: rate_denominator }, 1n, pair.b),
         }));
         const next_candidate_aggregate_trade = calcTradeSummary(next_candidate_trade.map((a) => a.trade).filter((a) => !!a) as Array<AbstractTrade>, rate_denominator);
-        
-        if (next_candidate_aggregate_trade != null && next_candidate_aggregate_trade.demand <= amount) {
+        const next_trade_demand = next_candidate_aggregate_trade == null ? 0n : (next_candidate_aggregate_trade.demand + (fee_paid_in_demand ? next_candidate_aggregate_trade.trade_fee : 0n));
+        if (next_candidate_aggregate_trade != null && next_trade_demand <= amount) {
           lower_bound = guess + 1n;
-          if (next_candidate_aggregate_trade.demand > demand_max) {
+          if (next_trade_demand > demand_max) {
             candidate_trade = next_candidate_trade;
             candidate_aggregate_trade = next_candidate_aggregate_trade;
-            demand_max = candidate_aggregate_trade.demand;
+            demand_max = next_trade_demand;
           }
         } else {
           upper_bound = guess;
