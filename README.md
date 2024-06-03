@@ -6,22 +6,18 @@
 # Cauldron example
 
 ```
-import { 
-  ExchangeLab as CauldronExchangeLab, 
-  PoolV0Parameters as CauldronPoolV0Parameters,
-  PoolV0 as CauldronPoolV0,
-  TradeResult as CauldronTradeResult,
-  TradeTxResult as CauldronTradeTxResult,
-} from '@cashcrop/cashlab/cauldron';
-const exlab = new CauldronExchangeLab();
+import { cauldron, TokenId, NATIVE_BCH_TOKEN_ID, Fraction } from 'cashlab';
+import type { PoolV0Parameters, PoolV0, TradeResult, TradeTxResult } from 'cashlab/build/cauldron/types.js';
+
+const exlab = new cauldron.ExchangeLab();
 
 const supply_token_id: TokenId = 'BCH';
 const demand_token_id: TokenId = <the_token_id_hex as string>;
-const pool0_params: CauldronPoolV0Parameters = {
+const pool0_params: PoolV0Parameters = {
   withdraw_pubkey_hash: <the_withdraw_pubkey_hash_of_the_pool>,
 };
 const pool0_locking_bytecode = exlab.generatePoolV0LockingBytecode(pool0_params)
-const input_pools: CauldronPoolV0[] = [
+const input_pools: PoolV0[] = [
   {
     version: '0',
     parameters: pool0_params,
@@ -42,11 +38,11 @@ const input_pools: CauldronPoolV0[] = [
 ];
 const demand: bigint = <an amount greater than zero>;
 
-const result: CauldronTradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools);
+const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools);
 
 const txfee_per_byte: bigint = 1n;
 
-const result: CauldronTradeTxResult = exlab.writeTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
+const result: TradeTxResult = exlab.writeTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
  
 exlab.verifyTradeTx(result);
 

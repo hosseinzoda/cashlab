@@ -56,18 +56,22 @@ const calcTradeToBuyTargetAmountFromAPair = (pair: PoolPair, amount: bigint): Ab
       bx1 = b1 - bx1 * C + b0 * C
       bx1 * (1 + C) = b1 + b0 * C
       bx1 = (b1 + b0 * C) / (1 + C)
+      bx1 = 1/1000 * (1000 * b1 + b0 * 3) * 1000 / 1003
+      bx1 = b1 * 1000 + b0 * 3 / 1003
      */
     pair_a_1 = a1;
-    pair_b_1 = (b1 + pair.b * 3n / 1000n) * 1000n / 1003n;
+    pair_b_1 = ((b1 * 1000n + pair.b * 3n) / 1003n);
 
     const reserved_trade_fee = pair_b_1 - b1;
-    trade_fee = calcFee(pair.b - pair_b_1)
-    if (trade_fee > reserved_trade_fee) {
-      const diff = trade_fee - reserved_trade_fee;
-      if (diff > 1) {
-        throw new InvalidProgramState('expecting difference of trade_fee & reserved_trade_fee not to exceed by one!!');
-      }
-      pair_b_1 += 1n;
+    trade_fee = calcFee(pair.b - pair_b_1);
+
+    const error_threshold = 1n;
+    if (trade_fee - reserved_trade_fee > error_threshold) {
+      throw new InvalidProgramState(`expecting the difference of trade fee and calculated reserved_trade_fee to not exceed the threshold (${error_threshold}), diff = ${trade_fee - reserved_trade_fee}!!`);
+    } else if (reserved_trade_fee > trade_fee) {
+      throw new InvalidProgramState(`expecting the reserved_trade_fee to not be greater than trade fee by a threshold, threshold: (${error_threshold}), ${reserved_trade_fee} > ${trade_fee}!!`);
+    } else {
+      pair_b_1 += trade_fee - reserved_trade_fee;
     }
   }
   if (pair_b_1 > pair.b) {
