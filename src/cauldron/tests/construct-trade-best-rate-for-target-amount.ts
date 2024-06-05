@@ -51,7 +51,7 @@ test('best rate for target amount, test01', (t) => {
   ];
   const demand = 12n;
 
-  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools);
+  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools, 0n);
   t.is(result.entries.length, 2);
   t.deepEqual(result.entries, [
     {
@@ -120,28 +120,26 @@ test('best rate for target amount, test02', (t) => {
   ];
   const demand = 12201n;
 
-  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools);
+  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools, 0n);
   t.is(result.entries.length, 2);
   t.assert(result.summary.rate.numerator <= 1132519173838209n, 'trade average result is higher than a known best rate!!')
   // exact match to a pre-determined result
   t.deepEqual(result.entries, [
     {
-      demand: 2996n,
+      demand: 2995n,
       demand_token_id,
       pool: input_pools[0],
-      supply: 421524884n,
+      supply: 421331548n,
       supply_token_id: 'BCH',
-      trade_fee: 1264574n,
+      trade_fee: 1263994n,
     },
     {
-      demand: 9205n,
+      demand: 9206n,
       demand_token_id,
       pool: input_pools[1],
-      supply: 960261760n,
+      supply: 960455052n,
       supply_token_id,
-      trade_fee: 2880785n,
+      trade_fee: 2881365n,
     },
   ]);
 });
-
-

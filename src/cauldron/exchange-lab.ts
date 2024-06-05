@@ -4,7 +4,7 @@ import type {
 import { NATIVE_BCH_TOKEN_ID, SpendableCoinType, PayoutAmountRuleType } from '../common/constants.js';
 import {
   ceilingValueOfBigIntDivision, convertTokenIdToUint8Array, uint8ArrayToHex,
-  bigIntMax, bigIntArraySortPolyfill, convertFractionDenominator,
+  bigIntMin, bigIntMax, bigIntArraySortPolyfill, convertFractionDenominator,
 } from '../common/util.js';
 import type {
   PoolV0, PoolV0Parameters, PoolTrade, TradeResult, TradeTxResult, TradeSummary, AbstractTrade
@@ -108,8 +108,8 @@ const calcTradeToBuyTargetAmountFromAPair = (pair: PoolPair, amount: bigint): Ab
     trade_fee,
   } : null;
 };
+const sizeOfPoolV0InAnExchangeTx = (): bigint => 197n
 /* UNUSED CODE START
-const sizeOfPoolV0InAnExchangeTx = (): bigint => 103n
 const calcTradeToBuyFromAPair = (pair: { a: bigint, b: bigint }, amount: bigint, rate_denominator: bigint): AbstractTrade | null => {
   const K = pair.a * pair.b;
   const pair_a_1 = ceilingValueOfBigIntDivision(K, pair.b + amount);
@@ -174,6 +174,10 @@ const calcPairRate = (pair: PoolPair, rate_denominator: bigint): Fraction => {
   return { numerator: K * rate_denominator / (pair.b * pair.b), denominator: rate_denominator }
 };
 
+const calcPairRateWithKB = (K: bigint, b: bigint, rate_denominator: bigint): bigint => {
+  return K * rate_denominator / (b * b);
+};
+
 /*
 const testCalcPairRateResult = (pair: PoolPair, trade: AbstractTrade, rate_denominator: bigint): any => {
   const zero_pair = { a: pair.a + trade.supply, b: pair.b - trade.demand, fee_paid_in_a: pair.fee_paid_in_a };
@@ -211,22 +215,36 @@ const approxAvailableAmountInAPairAtTargetAvgRate = (pair: PoolPair, target_rate
 
 // lower_bound >= result < upper_bound
 const approxAvailableAmountInAPairAtTargetRate = (pair: PoolPair, target_rate: Fraction, lower_bound: bigint, upper_bound: bigint): AbstractTrade | null => {
+  let best_guess = null;
   let trade = null
   while (lower_bound < upper_bound) {
     const guess = lower_bound + (upper_bound - lower_bound) / 2n;
-    const guess_trade = calcTradeToBuyTargetAmountFromAPair(pair, guess);
-    if (guess_trade == null) {
-      throw new InvalidProgramState('guess_trade is null!!')
-    }
-    const rate = calcPairRate({ a: pair.a + guess_trade.supply, b: pair.b - guess_trade.demand, fee_paid_in_a: pair.fee_paid_in_a }, target_rate.denominator);
-    if (rate.numerator > target_rate.numerator) {
+    const K = pair.a * pair.b;
+    const b1 = pair.b - guess;
+    const rate = calcPairRateWithKB(K, b1, target_rate.denominator);
+    if (rate > target_rate.numerator) {
       upper_bound = guess;
     } else {
       lower_bound = guess + 1n;
-      trade = guess_trade;
+      best_guess = guess;
+    }
+  }
+  if (best_guess != null) {
+    trade = calcTradeToBuyTargetAmountFromAPair(pair, best_guess);
+    if (trade == null) {
+      throw new InvalidProgramState('derived trade from best guess is null!!')
     }
   }
   return trade;
+};
+
+const sumAbstractTradeList = (trade_list: AbstractTrade[]): AbstractTrade | null => {
+  const demand = trade_list.reduce((a, b) => a + b.demand, 0n);
+  const supply = trade_list.reduce((a, b) => a + b.supply, 0n);
+  return supply > 0n && demand > 0n ? {
+    demand, supply,
+    trade_fee: trade_list.reduce((a, b) => a + b.trade_fee, 0n),
+  } : null;
 };
 
 const calcTradeSummary = (trade_list: AbstractTrade[], rate_denominator: bigint): TradeSummary | null => {
@@ -307,6 +325,94 @@ const fillOrderFromPoolPairsWithStepperFilling = (initial_pair_trade_list: Array
     return entry;
   });
 };
+
+const bestRateToTradeInPoolsForTargetAmount = (fee_paid_in_demand: boolean, pools_pair: Array<PoolPair>, amount: bigint, rate_denominator: bigint): { trade: Array<{ pair: PoolPair, trade: AbstractTrade }>, rate: Fraction } | null  => {
+  /*
+    The best is the lowest found aggregate rate.
+    The successive approximation algorithm is used to find lowest rate to acquire the most.
+    Based on available amount at a rate.
+  */
+  let candidate_trade: Array<{ pair: PoolPair, trade: AbstractTrade }> | null = null;
+  let best_rate = null;
+  let highest_found_demand = 0n;
+  let lower_bound = 1n;
+  // TODO:: verify upper_bound is actually the highest possible rate + 1n
+  let upper_bound = bigIntMax(...pools_pair.map((pair) => calcPairRate({ a: pair.a + pair.b - 1n, b: 1n, fee_paid_in_a: pair.fee_paid_in_a }, rate_denominator).numerator + 1n));
+  while (lower_bound < upper_bound) {
+    const guess = lower_bound + (upper_bound - lower_bound) / 2n;
+    const next_candidate_trade = pools_pair.map((pair) => ({
+      pair,
+      trade: approxAvailableAmountInAPairAtTargetRate(pair, { numerator: guess, denominator: rate_denominator }, 1n, pair.b),
+    }));
+    const next_trade_list = next_candidate_trade.map((a) => a.trade).filter((a) => !!a) as Array<AbstractTrade>;
+    const next_demand_sum = next_trade_list.reduce((a, b) => a + b.demand, 0n) +
+      (fee_paid_in_demand ? next_trade_list.reduce((a, b) => a + b.trade_fee, 0n) : 0n);
+    if (next_demand_sum <= amount) {
+      lower_bound = guess + 1n;
+      if (next_demand_sum > 0 && next_demand_sum > highest_found_demand) {
+        candidate_trade = next_candidate_trade.filter((a)=> a.trade != null) as Array<{ pair: PoolPair, trade: AbstractTrade }>;
+        highest_found_demand = next_demand_sum;
+        best_rate = guess;
+      }
+    } else {
+      upper_bound = guess;
+    }
+  }
+  return candidate_trade == null ? null : {
+    trade: candidate_trade,
+    rate: { numerator: best_rate as bigint, denominator: rate_denominator },
+  };
+}
+
+
+const increaseTradeDemandWithBestRate = (fee_paid_in_demand: boolean, initial_candidate_trade: Array<{ trade: AbstractTrade, pair: PoolPair }>, amount: bigint, rate_lower_bound: bigint, rate_upper_bound: bigint, rate_denominator: bigint): { trade: Array<{ pair: PoolPair, trade: AbstractTrade }>, rate: Fraction } | null => {
+  let candidate_trade = null;
+  let best_rate = null;
+  let highest_found_demand = initial_candidate_trade.reduce((a, b) => a + b.trade.demand, 0n) +
+      (fee_paid_in_demand ? initial_candidate_trade.reduce((a, b) => a + b.trade.trade_fee, 0n) : 0n);
+  if (highest_found_demand >= amount) {
+    throw new ValueError(`amount should be higher than the sum of current trade demand!`);
+  }
+  let known_trade = initial_candidate_trade;
+/*
+  let lower_bound = bigIntMin(...initial_candidate_trade.map((a) => calcPairRate({ a: a.pair.a + a.trade.supply, b: a.pair.b - a.trade.demand, fee_paid_in_a: a.pair.fee_paid_in_a }, rate_denominator).numerator));
+  // TODO:: verify upper_bound is actually the highest possible rate + 1n
+  let upper_bound = bigIntMax(...initial_candidate_trade.map((a) => calcPairRate({ a: a.pair.a + a.pair.b - 1n, b: 1n, fee_paid_in_a: pair.fee_paid_in_a }, rate_denominator).numerator + 1n));
+  */
+  while (rate_lower_bound < rate_upper_bound) {
+    const guess = rate_lower_bound + (rate_upper_bound - rate_lower_bound) / 2n;
+    const next_candidate_trade = known_trade.map((a) => {
+      const pool_lower_bound = a.trade.demand +
+        (fee_paid_in_demand ? a.trade.trade_fee : 0n);
+      const pool_upper_bound = bigIntMin(a.pair.b, amount + 1n);
+      if (pool_lower_bound >= pool_upper_bound) {
+        throw new InvalidProgramState(`candidate trade approx bound does not fit!,  pool_lower_bound > pool_upper_bound!!`);
+      }
+      const next_trade = approxAvailableAmountInAPairAtTargetRate(a.pair, { numerator: guess, denominator: rate_denominator }, pool_lower_bound, pool_upper_bound);
+      return {
+        pair: a.pair,
+        trade: next_trade != null ? next_trade : a.trade,
+      };
+    });
+    const next_trade_list = next_candidate_trade.map((a) => a.trade).filter((a) => !!a) as Array<AbstractTrade>;
+    const next_demand_sum = next_trade_list.reduce((a, b) => a + b.demand, 0n) +
+      (fee_paid_in_demand ? next_trade_list.reduce((a, b) => a + b.trade_fee, 0n) : 0n);
+    if (next_demand_sum <= amount) {
+      rate_lower_bound = guess + 1n;
+      if (next_demand_sum > 0 && next_demand_sum > highest_found_demand) {
+        known_trade = candidate_trade = next_candidate_trade;
+        highest_found_demand = next_demand_sum;
+        best_rate = guess;
+      }
+    } else {
+      rate_upper_bound = guess;
+    }
+  }
+  return candidate_trade == null ? null : {
+    trade: candidate_trade,
+    rate: { numerator: best_rate as bigint, denominator: rate_denominator },
+  };
+}
 
 /* Not used
 const reduceFillOrderFromPoolPairsWithStepperFilling = (pair_trade_list: Array<{ trade: AbstractTrade | null, pair: PoolPair }>, requested_amount: bigint, step_size: bigint, rate_denominator: bigint): Array<{ trade: AbstractTrade | null, pair: any }> => {
@@ -783,9 +889,12 @@ export default class ExchangeLab {
       summary: calcTradeSummary(result_entries, this._rate_denominator) as TradeSummary,
     } : null;
   }
-  constractTradeBestRateForTargetAmount (supply_token_id: TokenId, demand_token_id: TokenId, amount: bigint, input_pools: PoolV0[]): TradeResult {
+  constractTradeBestRateForTargetAmount (supply_token_id: TokenId, demand_token_id: TokenId, amount: bigint, input_pools: PoolV0[], txfee_per_byte: bigint): TradeResult {
     const rate_denominator = this._rate_denominator;
     const { pools_pair } = prepareForARequestToConstructTrade(supply_token_id, demand_token_id, input_pools);
+    if (txfee_per_byte < 0n) {
+      throw new ValueError('txfee_per_byte should be greater than or equal to zero!')
+    }
     if (amount <= 0n) {
       throw new ValueError('amount should be greater than zero!')
     }
@@ -795,57 +904,74 @@ export default class ExchangeLab {
     const fee_paid_in_demand = demand_token_id == NATIVE_BCH_TOKEN_ID ? true : false;
     // requested amount is acquired
     // now use the aggregate rate as the base trade and then find the best rate with successive approximation.
-    let candidate_aggregate_trade = null;
     let candidate_trade = null;
+    let candidate_rate: Fraction | null = null;
     if (input_pools.length > 1) {
-      /*
-        The best is the lowest found aggregate rate.
-        The successive approximation algorithm is used to find lowest rate to acquire the most.
-        Based on using approx available amount at a rate.
-      */
-      let demand_max = 0n;
-      let lower_bound = 1n;
-      // TODO:: verify upper_bound is actually the highest possible rate + 1n
-      let upper_bound = bigIntMax(...pools_pair.map((pair) => calcPairRate({ a: pair.a + pair.b - 1n, b: 1n, fee_paid_in_a: pair.fee_paid_in_a }, rate_denominator).numerator + 1n));
-      while (lower_bound < upper_bound) {
-        const guess = lower_bound + (upper_bound - lower_bound) / 2n;
-        const next_candidate_trade = pools_pair.map((pair) => ({
-          pair,
-          trade: approxAvailableAmountInAPairAtTargetRate(pair, { numerator: guess, denominator: rate_denominator }, 1n, pair.b),
-        }));
-        const next_candidate_aggregate_trade = calcTradeSummary(next_candidate_trade.map((a) => a.trade).filter((a) => !!a) as Array<AbstractTrade>, rate_denominator);
-        const next_trade_demand = next_candidate_aggregate_trade == null ? 0n : (next_candidate_aggregate_trade.demand + (fee_paid_in_demand ? next_candidate_aggregate_trade.trade_fee : 0n));
-        if (next_candidate_aggregate_trade != null && next_trade_demand <= amount) {
-          lower_bound = guess + 1n;
-          if (next_trade_demand > demand_max) {
-            candidate_trade = next_candidate_trade;
-            candidate_aggregate_trade = next_candidate_aggregate_trade;
-            demand_max = next_trade_demand;
+      const result = bestRateToTradeInPoolsForTargetAmount(fee_paid_in_demand, pools_pair, amount, rate_denominator);
+      if (result != null) {
+        candidate_trade = result.trade;
+        candidate_rate = result.rate;
+      }
+    }
+    /*
+      the need, set a lower limit on included pools by taking trade's fixed cost into account.
+      eliminate net negative pools based on the demand amount
+    */
+    if (candidate_trade != null && candidate_trade.length > 1 && txfee_per_byte > 0n) {
+      let exhausted = false;
+      const pool_fixed_cost = {
+        supply: !fee_paid_in_demand ? sizeOfPoolV0InAnExchangeTx() * txfee_per_byte : 0n,
+        demand: fee_paid_in_demand ? sizeOfPoolV0InAnExchangeTx() * txfee_per_byte : 0n,
+      };
+      const changeInRateWithFixedCost = (trade: AbstractTrade): bigint => (trade.supply + pool_fixed_cost.supply) * rate_denominator  / (trade.demand - pool_fixed_cost.demand) - (trade.supply * rate_denominator / trade.demand);
+      while (!exhausted) {
+        let eliminated_count = 0;
+        const entries = candidate_trade.map((a) => ({ pair: a.pair, trade: a.trade, change_in_rate_with_fixed_cost: changeInRateWithFixedCost(a.trade) }));
+        bigIntArraySortPolyfill(entries, (a, b) => b.change_in_rate_with_fixed_cost - a.change_in_rate_with_fixed_cost);
+        for (let i = entries.length - 1; i > 0; i--) {
+          const eliminate_candidate = entries.slice(0, i);
+          const keep_candidate = entries.slice(i);
+          const rate_lower_bound = (candidate_rate as Fraction).numerator;
+          // TODO:: verify upper_bound is actually the highest possible rate + 1n
+          const rate_upper_bound = bigIntMax(...keep_candidate.map((a) => calcPairRate({ a: a.pair.a + a.pair.b - 1n, b: 1n, fee_paid_in_a: a.pair.fee_paid_in_a }, rate_denominator).numerator + 1n));
+          const result = increaseTradeDemandWithBestRate(fee_paid_in_demand, keep_candidate, amount, rate_lower_bound, rate_upper_bound, rate_denominator);
+          if (result != null) {
+            const resized_trade_sum = sumAbstractTradeList(result.trade.map((a) => a.trade)) as AbstractTrade;
+            // keep ratio with the benefit of eliminating the other pools (avg rate)
+            const eliminate_count = BigInt(eliminate_candidate.length);
+            const ratio_with_benefit = (resized_trade_sum.supply - pool_fixed_cost.supply * eliminate_count) * rate_denominator / (resized_trade_sum.demand + pool_fixed_cost.demand * eliminate_count);
+            // original trade avg rate
+            const candidate_avg_rate = calcTradeAvgRate(sumAbstractTradeList(candidate_trade.map((a) => a.trade)) as AbstractTrade, rate_denominator);
+            if (ratio_with_benefit < candidate_avg_rate.numerator) {
+              // replace
+              candidate_trade = result.trade;
+              candidate_rate = result.rate;
+              eliminated_count += eliminate_candidate.length;
+            }
           }
-        } else {
-          upper_bound = guess;
+        }
+        if (eliminated_count == 0) {
+          break; // no more elimination
         }
       }
     }
+    // fill up the remaining amount if needed
     const stepper_size = 10n;
     if (candidate_trade == null) {
       candidate_trade = fillOrderFromPoolPairsWithStepperFilling(pools_pair.map((pair) => ({ pair, trade: null })), amount, bigIntMax(1n, amount / stepper_size), rate_denominator);
       if (candidate_trade == null) {
         throw new InsufficientCapitalInPools('Not enough tokens available in input pools.', { requires: amount, pools: input_pools });
       }
-      candidate_aggregate_trade = calcTradeSummary(candidate_trade.map((a) => a.trade).filter((a) => !!a) as Array<AbstractTrade>, rate_denominator);
     } else {
-      if (candidate_aggregate_trade == null) {
-        throw new InvalidProgramState('candidate_aggregate_trade is null!');
-      }
-      if (candidate_aggregate_trade.demand < amount) {
+      const candidate_trade_demand_sum: bigint = candidate_trade.reduce((a, b) => a + b.trade.demand, 0n) +
+        (fee_paid_in_demand ? candidate_trade.reduce((a, b) => a + b.trade.trade_fee, 0n) : 0n);
+      if (candidate_trade_demand_sum < amount) {
         // fill to order size
-        const tmp = fillOrderFromPoolPairsWithStepperFilling(candidate_trade, amount, bigIntMax(1n, (amount - candidate_aggregate_trade.demand) / stepper_size), rate_denominator);
+        const tmp = fillOrderFromPoolPairsWithStepperFilling(candidate_trade, amount, bigIntMax(1n, (amount - candidate_trade_demand_sum) / stepper_size), rate_denominator);
         if (tmp == null) {
           throw new InvalidProgramState('Stepper filling failed to fill order from pools, Enough tokens should exists in the pools!');
         }
         candidate_trade = tmp;
-        candidate_aggregate_trade = calcTradeSummary(candidate_trade.map((a) => a.trade).filter((a) => !!a) as Array<AbstractTrade>, rate_denominator);
       }
     }
     const result_entries: PoolTrade[] = [];
@@ -864,7 +990,7 @@ export default class ExchangeLab {
     return {
       entries: result_entries,
       // the impl requires entires to have at least a trade, So trade summary will not be null
-      summary: candidate_aggregate_trade as TradeSummary,
+      summary: calcTradeSummary(candidate_trade.map((a) => a.trade).filter((a) => !!a) as Array<AbstractTrade>, rate_denominator) as TradeSummary,
     };
   }
   /*

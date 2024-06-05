@@ -35,7 +35,7 @@ test('trade fee calc with target demand, test01', (t) => {
   ];
   const demand = 4085886n;
 
-  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools);
+  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools, 0n);
   t.is(result.entries.length, 1);
   // exact match to a pre-determined result
   t.deepEqual(result.entries, [
@@ -80,7 +80,7 @@ test('trade fee calc with target demand, test02', (t) => {
   ];
   const demand = 4085887n;
 
-  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools);
+  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools, 0n);
   t.is(result.entries.length, 1);
   // exact match to a pre-determined result
   t.deepEqual(result.entries, [
