@@ -924,9 +924,11 @@ export default class ExchangeLab {
       };
       const changeInRateWithFixedCost = (trade: AbstractTrade): bigint => (trade.supply + pool_fixed_cost.supply) * rate_denominator  / (trade.demand - pool_fixed_cost.demand) - (trade.supply * rate_denominator / trade.demand);
       while (!exhausted) {
-        let eliminated_count = 0;
         const entries = candidate_trade.map((a) => ({ pair: a.pair, trade: a.trade, change_in_rate_with_fixed_cost: changeInRateWithFixedCost(a.trade) }));
         bigIntArraySortPolyfill(entries, (a, b) => b.change_in_rate_with_fixed_cost - a.change_in_rate_with_fixed_cost);
+        const initial_avg_rate = calcTradeAvgRate(sumAbstractTradeList(candidate_trade.map((a) => a.trade)) as AbstractTrade, rate_denominator);
+        let highest_benefit_rate = initial_avg_rate.numerator;
+        let highest_benefit_result = null;
         for (let i = entries.length - 1; i > 0; i--) {
           const eliminate_candidate = entries.slice(0, i);
           const keep_candidate = entries.slice(i);
@@ -940,17 +942,18 @@ export default class ExchangeLab {
             const eliminate_count = BigInt(eliminate_candidate.length);
             const ratio_with_benefit = (resized_trade_sum.supply - pool_fixed_cost.supply * eliminate_count) * rate_denominator / (resized_trade_sum.demand + pool_fixed_cost.demand * eliminate_count);
             // original trade avg rate
-            const candidate_avg_rate = calcTradeAvgRate(sumAbstractTradeList(candidate_trade.map((a) => a.trade)) as AbstractTrade, rate_denominator);
-            if (ratio_with_benefit < candidate_avg_rate.numerator) {
+            if (ratio_with_benefit < highest_benefit_rate) {
               // replace
-              candidate_trade = result.trade;
-              candidate_rate = result.rate;
-              eliminated_count += eliminate_candidate.length;
+              highest_benefit_rate = ratio_with_benefit;
+              highest_benefit_result = result;
             }
           }
         }
-        if (eliminated_count == 0) {
-          break; // no more elimination
+        if (highest_benefit_result != null) {
+          candidate_trade = highest_benefit_result.trade;
+          candidate_rate = highest_benefit_result.rate;
+        } else {
+          break; // no more eliminations
         }
       }
     }
