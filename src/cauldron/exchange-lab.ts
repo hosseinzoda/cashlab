@@ -269,7 +269,8 @@ const fillOrderFromPoolPairsWithStepperFilling = (initial_pair_trade_list: Array
     pair_trade_list.forEach((entry) => {
       if (!entry.next_step_trade) {
         const next_step = getStepForPair(entry.pair);
-        const next_trade = calcTradeToBuyTargetAmountFromAPair(entry.pair, (entry.trade ? entry.trade.demand : 0n) + next_step);
+        const next_demand = (entry.trade ? entry.trade.demand + (!entry.pair.fee_paid_in_a ? entry.trade.trade_fee : 0n) : 0n) + next_step;
+        const next_trade = calcTradeToBuyTargetAmountFromAPair(entry.pair, next_demand);
         entry.next_step_trade = next_trade != null ? {
           ...next_trade,
           rate: calcTradeAvgRate(next_trade, rate_denominator),
@@ -977,7 +978,7 @@ export default class ExchangeLab {
         });
         const tmp = fillOrderFromPoolPairsWithStepperFilling(entries, amount, bigIntMax(1n, (amount - candidate_trade_demand_sum) / stepper_size), rate_denominator);
         if (tmp == null) {
-          throw new InvalidProgramState('Stepper filling failed to fill order from pools, Enough tokens should exists in the pools!');
+          throw new InsufficientCapitalInPools('Not enough tokens available in input pools.', { requires: amount, pools: input_pools });
         }
         candidate_trade = tmp.filter((a) => a.trade != null) as Array<{ pair: PoolPair, trade: AbstractTrade }>;
       }
