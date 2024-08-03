@@ -31,26 +31,24 @@ export const convertTokenIdToUint8Array = (value: TokenId): Uint8Array => {
   return Uint8Array.from(bytes);
 };
 
-export const uint8ArrayToHex = (value: Uint8Array) => {
-  return Array.from(value).map((a) => ('00' + a.toString(16)).slice(-2)).join('');
-};
-
-export const uint8ArrayEqual = (a: Uint8Array, b: Uint8Array): boolean => {
-  if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array)) {
-    return false;
-  }
-  if (a.length != b.length) {
-    return false;
-  }
-  let index = 0;
-  while (index < a.length) {
-    if (a[index] != b[index]) {
+export const uint8ArrayEqual = typeof Buffer != 'undefined' ?
+  (a: Uint8Array, b: Uint8Array): boolean => (a instanceof Buffer ? a : Buffer.from(a)).equals(b) :
+  (a: Uint8Array, b: Uint8Array): boolean => {
+    if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array)) {
       return false;
     }
-    index++;
-  }
-  return true;
-};
+    if (a.length != b.length) {
+      return false;
+    }
+    let index = 0;
+    while (index < a.length) {
+      if (a[index] != b[index]) {
+        return false;
+      }
+      index++;
+    }
+    return true;
+  };
 
 export const bigIntMax = (...args: bigint[]): bigint => {
   if (args.length == 0) {

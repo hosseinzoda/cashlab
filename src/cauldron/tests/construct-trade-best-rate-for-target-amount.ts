@@ -51,7 +51,7 @@ test('best rate for target amount, test01', (t) => {
   ];
   const demand = 12n;
 
-  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools, 0n);
+  const result: TradeResult = exlab.constructTradeBestRateForTargetDemand(supply_token_id, demand_token_id, demand, input_pools, 0n);
   t.is(result.entries.length, 2);
   t.deepEqual(result.entries, [
     {
@@ -120,7 +120,7 @@ test('best rate for target amount, test02', (t) => {
   ];
   const demand = 12201n;
 
-  const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools, 0n);
+  const result: TradeResult = exlab.constructTradeBestRateForTargetDemand(supply_token_id, demand_token_id, demand, input_pools, 0n);
   t.is(result.entries.length, 2);
   t.assert(result.summary.rate.numerator <= 1132519173838209n, 'trade average result is higher than a known best rate!!')
   // exact match to a pre-determined result

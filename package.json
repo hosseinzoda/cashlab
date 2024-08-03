@@ -1,6 +1,6 @@
 {
   "name": "cashlab",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "A module to write, inspect & validate bch contracts/transactions.",
   "type": "module",
   "main": "./build/index.js",
@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc -p config/tsconfig.json",
     "test": "c8 ava",
+    "test:xc8": "ava",
     "doc": "npm run doc:html && npm run doc:extract && npm run doc:generate",
     "doc:html": "typedoc src/index.ts --out build/docs",
     "doc:extract": "mkdir -p build/api && api-extractor run --local",
@@ -31,6 +32,7 @@
     "@ava/typescript": "^4.1.0",
     "@microsoft/api-documenter": "^7.24.2",
     "@microsoft/api-extractor": "^7.43.1",
+    "@types/node": "^20.14.10",
     "ava": "^6.1.2",
     "c8": "^9.1.0",
     "typedoc": "^0.25.13",

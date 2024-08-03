@@ -86,11 +86,20 @@ export class ExceptionRegistry {
 
 export class Exception extends BaseException { };
 export class InternalError extends Exception { };
-export class NotFoundError extends Exception { };
+export class NotFoundError extends Exception {
+  constructor (message?: string) {
+    super(message || '');
+  }
+};
 export class ValueError extends Exception { };
 export class NotImplemented extends Exception { };
 export class InsufficientFunds extends Exception { };
 export class InvalidProgramState extends Exception { };
+export class BurnTokenException extends Exception {
+  constructor (message?: string) {
+    super(message || '');
+  }
+};
 
 for (let [ name, exception ] of [
   [ 'Exception', Exception ],

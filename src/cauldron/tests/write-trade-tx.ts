@@ -9,7 +9,7 @@ import type {
 import {
   NATIVE_BCH_TOKEN_ID, FIXED_PAYOUT_RULE_APPLY_MIN_AMOUNT, SpendableCoinType, PayoutAmountRuleType,
 } from '../../common/constants.js';
-import { convertTokenIdToUint8Array, /*uint8ArrayToHex, */uint8ArrayEqual } from '../../common/util.js';
+import { convertTokenIdToUint8Array, uint8ArrayEqual } from '../../common/util.js';
 import {
   sample_pool_token_id, sample_pool_withdraw_pubkey_hash, dummy_private_key, dummy_txhash, aBCH,
   second_dummy_private_key,
@@ -151,8 +151,6 @@ test('write a trade tx, test01', (t) => {
 
   exlab.verifyTradeTx(result);
 
-  // console.log(JSON.stringify(result, (_, a) => typeof a == 'bigint' ? a+'' : (a instanceof Uint8Array ? uint8ArrayToHex(a) : a), '  '));
-
   // check fixed payout
   verifyFixedPayouts(t, result, payout_rules);
   // check sum of all tokens
@@ -256,7 +254,6 @@ test.only('write a trade tx, test02', (t) => {
 
   const result: TradeTxResult = exlab.writeTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
 
-  //console.log(JSON.stringify(result, (_, a) => typeof a == 'bigint' ? a+'' : (a instanceof Uint8Array ? uint8ArrayToHex(a) : a), '  '));
   exlab.verifyTradeTx(result);
 
   // check fixed payout
