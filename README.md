@@ -38,7 +38,7 @@ const input_pools: PoolV0[] = [
 ];
 const demand: bigint = <an amount greater than zero>;
 
-const result: TradeResult = exlab.constractTradeBestRateForTargetAmount(supply_token_id, demand_token_id, demand, input_pools);
+const result: TradeResult = exlab.constructTradeBestRateForTargetDemand(supply_token_id, demand_token_id, demand, input_pools);
 
 const txfee_per_byte: bigint = 1n;
 
