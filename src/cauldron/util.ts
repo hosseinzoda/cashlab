@@ -733,7 +733,7 @@ const eliminateNetNegativePoolsInATradeATarget = (
     let next_candidate_sum = next_candidate == null ? null : sumAbstractTradeList(next_candidate.trade.map((a) => a.trade));
     if (next_candidate != null && next_candidate_sum != null && next_candidate_sum[target.name] < amount) {
       const tmp = target.fillTrade(next_candidate.trade, amount, amount - next_candidate_sum[target.name], rate_denominator);
-      if (tmp == null) {
+      if (tmp == null || tmp.length == 0) {
         next_candidate = null;
       } else {
         next_candidate.trade = tmp;
@@ -863,16 +863,12 @@ export const calcTradeWithTargetSupplyFromAPair = (pair: PoolPair, amount: bigin
     const pre_a1 = pair.a + amount - calcTradeFee(amount);
     const b1 = ceilingValueOfBigIntDivision(K, pre_a1);
     const a1 = ceilingValueOfBigIntDivision(K, b1);
-    if (a1 <= pair.a) {
-      /* c8 ignore next */
-      throw new InvalidProgramState(`a1 <= pair.a`);
+    if (a1 <= pair.a || b1 >= pair.b) {
+      return null; // given supply is not enough to acquire min demand
     }
     pair_a_1 = __pairIncludeFeeForTarget(a1, pair.a);
     pair_b_1 = b1;
     trade_fee = calcTradeFee(pair_a_1 - pair.a);
-    if (pair.b - pair_b_1 <= 0n) {
-      return null; // given supply is not enough to acquire min demand
-    }
     if (pair_a_1 <= pair.a) {
       /* c8 ignore next */
       throw new InvalidProgramState(`pair_a_1 <= pair.a`);
@@ -1112,7 +1108,7 @@ export const bestRateWithEliminateBasedOnFixedCostAndFillTradeForTargetSupply = 
       } else {
         if (tmp_sum.supply < amount) {
           const tmp = fillTradeToTargetSupplyFromPairsWithFillingStepper(result.trade, amount, amount - tmp_sum.supply, rate_denominator);
-          if (tmp != null) {
+          if (tmp != null && tmp.length > 0) {
             return { trade: tmp, rate: result.rate };
           }
         } else {

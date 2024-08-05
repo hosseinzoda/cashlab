@@ -10,7 +10,7 @@ import type {
   PoolV0, PoolV0Parameters, PoolTrade, TradeResult, TradeTxResult, TradeSummary, AbstractTrade,
   WriteChainedTradeTxController,
 } from './types.js';
-import { ExceptionRegistry, Exception, InvalidProgramState, ValueError, NotFoundError } from '../common/exceptions.js';
+import { ExceptionRegistry, Exception, InvalidProgramState, ValueError, NotFoundError, InsufficientFunds } from '../common/exceptions.js';
 import cauldron_libauth_template_data from './cauldron-libauth-template.json' assert { type: "json" };
 import * as libauth from '@bitauth/libauth';
 import { writeTradeTx } from './write-trade-tx.js';
@@ -401,6 +401,9 @@ export default class ExchangeLab {
     if (candidate_trade == null) {
       const tmp = fillTradeToTargetSupplyFromPairsWithFillingStepper(pools_pair.map((pair) => ({ pair, trade: null })), amount, bigIntMax(1n, amount / stepper_size), rate_denominator);
       if (tmp != null) {
+        if (tmp.length == 0) {
+          throw new InsufficientFunds(`Can't acquire any token with the given target supply.`);
+        }
         const summary = calcTradeSummary(tmp.map((a) => a.trade), rate_denominator);
         if (summary == null) {
           /* c8 ignore next */
@@ -420,6 +423,9 @@ export default class ExchangeLab {
         if (tmp == null) {
           candidate_trade = null;
         } else {
+          if (tmp.length == 0) {
+            throw new InsufficientFunds(`Can't acquire any token with the given target supply.`);
+          }
           const summary = calcTradeSummary(tmp.map((a) => a.trade), rate_denominator);
           if (summary == null) {
             /* c8 ignore next */
