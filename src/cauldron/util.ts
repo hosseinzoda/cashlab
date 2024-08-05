@@ -76,32 +76,6 @@ const __pairIncludeFeeForTarget = (target: bigint, initial: bigint): bigint => {
   return x2;
 };
 
-const __pairLeaveFeeInPoolForMinTarget = (target: bigint, initial: bigint) => {
-  /*
-    x1 = x0 + fee
-    C = 3n / 1000n
-    x1 = x0 + fee
-    x1 = x0 + (x0 - initial) * C
-    x1 = x0 + x0 * C - initial * C
-    x1 = x0 * (1 + C) - initial * C
-    x1 = x0 * (1003 / 1000) - initial * 3 / 1000
-    x1 = 1/1000 * (x0 * 1003 - initial * 3)
-    x1 = (x0 * 1003 - initial * 3) / 1000
-  */
-  const x1 = (target * 1003n - initial * 3n) / 1000n;
-  for (const entry of  [ [0n, x1 + 1n], [1n, x1] ]) {
-    const error_threshold: bigint = entry[0] as any;
-    const x1i: bigint = entry[1] as any;
-    const reserved_trade_fee = target - x1i;
-    const trade_fee = calcTradeFee(initial - target);
-    const diff = reserved_trade_fee - trade_fee;
-    if (diff >= 0n && diff <= error_threshold) {
-      return { value: x1i - diff, trade_fee }
-    }
-  }
-  console.error({ x1, target, initial });
-  throw new InvalidProgramState(`__pairLeaveFeeInPoolForMinTarget failed to return a value!!`);
-};
 /* NOT COMPLETE
 const __pairLeaveFeeInPoolForMinTarget__ = (target: bigint, initial: bigint) => {
   /*
@@ -136,6 +110,7 @@ const __pairLeaveFeeInPoolForMinTarget__ = (target: bigint, initial: bigint) => 
 */
 const __pairLeaveFeeInPoolForTarget = (target: bigint, initial: bigint) => {
   /*
+    initial > target
     Assuming x0 contains the fee in it, The following formula deducts the fee from target.
     --- x1 = x0 - fee
     C = 3n / 1000n
@@ -175,6 +150,36 @@ const __pairLeaveFeeInPoolForTarget = (target: bigint, initial: bigint) => {
   }
   */
 };
+const __pairLeaveFeeInPoolForMinTarget = (target: bigint, initial: bigint) => {
+  /*
+    initial > target
+    x1 = x0 + fee
+    C = 3n / 1000n
+    x1 = x0 + fee
+    x1 = x0 + (x0 - initial) * C
+    x1 = x0 + x0 * C - initial * C
+    x1 = x0 * (1 + C) - initial * C
+    x1 = x0 * (1003 / 1000) - initial * 3 / 1000
+    x1 = 1/1000 * (x0 * 1003 - initial * 3)
+    x1 = (x0 * 1003 - initial * 3) / 1000
+  */
+  const x1 = (target * 1003n - initial * 3n) / 1000n;
+  for (const entry of  [ [0n, x1 + 1n], [1n, x1] ]) {
+    const error_threshold: bigint = entry[0] as any;
+    const x1i: bigint = entry[1] as any;
+    const reserved_trade_fee = target - x1i;
+    const trade_fee = calcTradeFee(initial - target);
+    const diff = reserved_trade_fee - trade_fee;
+    if (diff >= 0n && diff <= error_threshold) {
+      return { value: x1i - diff, trade_fee }
+    }
+  }
+  console.error({ x1, target, initial });
+  throw new InvalidProgramState(`__pairLeaveFeeInPoolForMinTarget failed to return a value!!`);
+};
+
+
+
 const __tradeSanityCheck = (data: { pair_a_1: bigint, pair_b_1: bigint, trade_fee: bigint, K: bigint, pair: PoolPair }) => {
   const { pair_a_1, pair_b_1, trade_fee, K, pair } = data;
   try {
@@ -853,21 +858,27 @@ const reduceFillOrderFromPoolPairsWithFillingStepper = (pair_trade_list: Array<{
 */
 export const calcTradeWithTargetSupplyFromAPair = (pair: PoolPair, amount: bigint): AbstractTrade | null => {
   const K = pair.a * pair.b;
-  const pre_a1 = pair.a + amount;
   let pair_a_1, pair_b_1, trade_fee;
   if (pair.fee_paid_in_a) {
-    const amount_trade_fee = calcTradeFee(amount);
-    pair_b_1 = ceilingValueOfBigIntDivision(K, pre_a1 - amount_trade_fee);
+    const pre_a1 = pair.a + amount - calcTradeFee(amount);
+    const b1 = ceilingValueOfBigIntDivision(K, pre_a1);
+    const a1 = ceilingValueOfBigIntDivision(K, b1);
+    if (a1 <= pair.a) {
+      /* c8 ignore next */
+      throw new InvalidProgramState(`a1 <= pair.a`);
+    }
+    pair_a_1 = __pairIncludeFeeForTarget(a1, pair.a);
+    pair_b_1 = b1;
+    trade_fee = calcTradeFee(pair_a_1 - pair.a);
     if (pair.b - pair_b_1 <= 0n) {
       return null; // given supply is not enough to acquire min demand
     }
-    pair_a_1 = ceilingValueOfBigIntDivision(K, pair_b_1);
     if (pair_a_1 <= pair.a) {
       /* c8 ignore next */
       throw new InvalidProgramState(`pair_a_1 <= pair.a`);
     }
-    trade_fee = calcTradeFee(pair_a_1 - pair.a);
   } else {
+    const pre_a1 = pair.a + amount;
     const pre_b1 = bigIntMax(pair.b_min_reserve, ceilingValueOfBigIntDivision(K, pre_a1));
     const a1 = ceilingValueOfBigIntDivision(K, pre_b1);
     const b1 = ceilingValueOfBigIntDivision(K, a1);

@@ -2,6 +2,12 @@
 
 All notable changes of this module is documented in this file, Documenting changelog has start from version `0.0.9`.
 
+## [0.0.10] - 2024-08-05
+
+### FIXED
+
+- A fix in: `src/cauldron/util.ts@calcTradeWithTargetSupplyFromAPair`
+
 ## [0.0.9] - 2024-08-03
 
 ### ADDED
