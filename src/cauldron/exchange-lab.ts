@@ -18,7 +18,7 @@ import { writeChainedTradeTx } from './write-chained-trade-tx.js';
 import {
   PoolPair, calcPairRate, calcTradeSummary, sizeOfPoolV0InAnExchangeTx,
   calcTradeWithTargetSupplyFromAPair,
-  approxAvailableAmountInAPairAtTargetAvgRate, approxAvailableAmountInAPairAtTargetRate,
+  approxAvailableAmountInAPairAtTargetAvgRate, approxAvailableAmountInAPairAtTargetRate, calcTradeWithTargetDemandFromAPair,
   fillTradeToTargetDemandFromPairsWithFillingStepper, bestRateToTradeInPoolsForTargetDemand,
   eliminateNetNegativePoolsInATradeWithTargetDemand,
   requiredSupplyToMaxOutAPair,
@@ -185,7 +185,15 @@ export default class ExchangeLab {
     for (const pool_pair of pools_pair) {
       const lower_bound = 1n;
       const upper_bound = pool_pair.b - pool_pair.b_min_reserve + 1n;
-      const trade = approxAvailableAmountInAPairAtTargetRate(pool_pair, target_rate, lower_bound, upper_bound);
+      const best_guess = approxAvailableAmountInAPairAtTargetRate(pool_pair, target_rate, lower_bound, upper_bound);
+      let trade = null;
+      if (best_guess != null) {
+        trade = calcTradeWithTargetDemandFromAPair(pool_pair, best_guess);
+        if (trade == null) {
+          /* c8 ignore next */
+          throw new InvalidProgramState('derived trade from best guess is null!!')
+        }
+      }
       if (trade != null && trade.demand > 0n) {
         result_entries.push({
           pool: pool_pair.pool,
@@ -243,6 +251,7 @@ export default class ExchangeLab {
     if (input_pools.length == 0) {
       throw new InsufficientCapitalInPools('Nothing available to trade.', { requires: amount, pools: input_pools });
     }
+    const stepper_size = 10n;
     const fee_paid_in_demand = demand_token_id == NATIVE_BCH_TOKEN_ID ? true : false;
     const pool_fixed_cost = {
       supply: !fee_paid_in_demand ? sizeOfPoolV0InAnExchangeTx() * txfee_per_byte : 0n,
@@ -256,13 +265,26 @@ export default class ExchangeLab {
       let pools_set: Array<{ pair: PoolPair, lower_bound: bigint, upper_bound: bigint }> = pools_pair.map((pair) => ({ pair, lower_bound: 1n, upper_bound: pair.b - pair.b_min_reserve + 1n }));
       const result = bestRateToTradeInPoolsForTargetDemand(pools_set, amount, rate_lower_bound, rate_upper_bound, rate_denominator);
       if (result != null) {
+        rate_lower_bound = result.rate.numerator;
         const summary = calcTradeSummary(result.trade.map((a) => a.trade), rate_denominator);
         if (summary == null) {
           /* c8 ignore next */
           throw new InvalidProgramState('summary == null!!');
         }
-        rate_lower_bound = result.rate.numerator;
-        candidate_trade = { entries: result.trade, rate: result.rate, summary };
+        if (summary.demand < amount) {
+          // fill to order size
+          const tmp = fillTradeToTargetDemandFromPairsWithFillingStepper(result.trade, amount, bigIntMax(1n, (amount - summary.demand) / stepper_size), rate_denominator);
+          if (tmp != null) {
+            const summary = calcTradeSummary(tmp.map((a) => a.trade), rate_denominator);
+            if (summary == null) {
+              /* c8 ignore next */
+              throw new InvalidProgramState('summary == null!!');
+            }
+            candidate_trade = { entries: tmp, rate: null, summary };
+          }
+        } else {
+          candidate_trade = { entries: result.trade, rate: result.rate, summary };
+        }
       }
     }
     /*
@@ -287,7 +309,6 @@ export default class ExchangeLab {
       }
     }
     // fill up the remaining amount if needed
-    const stepper_size = 10n;
     if (candidate_trade == null) {
       const tmp = fillTradeToTargetDemandFromPairsWithFillingStepper(pools_pair.map((pair) => ({ pair, trade: null })), amount, bigIntMax(1n, amount / stepper_size), rate_denominator);
       if (tmp != null) {
@@ -297,26 +318,6 @@ export default class ExchangeLab {
           throw new InvalidProgramState('summary == null!!');
         }
         candidate_trade = { entries: tmp, rate: null, summary };
-      }
-    } else {
-      if (candidate_trade.summary.demand < amount) {
-        // fill to order size
-        const pair_trade_list: Array<{ pair: PoolPair, trade: AbstractTrade }> = candidate_trade.entries;
-        const entries = pools_pair.map((pair) => {
-          const pair_trade = pair_trade_list.find((a) => (a.pair as any).pool == pair.pool);
-          return { pair, trade: pair_trade != null ? pair_trade.trade : null };
-        });
-        const tmp = fillTradeToTargetDemandFromPairsWithFillingStepper(entries, amount, bigIntMax(1n, (amount - candidate_trade.summary.demand) / stepper_size), rate_denominator);
-        if (tmp == null) {
-          candidate_trade = null;
-        } else {
-          const summary = calcTradeSummary(tmp.map((a) => a.trade), rate_denominator);
-          if (summary == null) {
-            /* c8 ignore next */
-            throw new InvalidProgramState('summary == null!!');
-          }
-          candidate_trade = { entries: tmp, rate: null, summary };
-        }
       }
     }
     if (candidate_trade == null) {
@@ -358,6 +359,7 @@ export default class ExchangeLab {
       supply: !fee_paid_in_demand ? sizeOfPoolV0InAnExchangeTx() * txfee_per_byte : 0n,
       demand: fee_paid_in_demand ? sizeOfPoolV0InAnExchangeTx() * txfee_per_byte : 0n,
     };
+    const stepper_size = 10n;
     let rate_lower_bound = 1n;
     // TODO:: verify upper_bound is actually the highest possible rate + 1n
     let rate_upper_bound = bigIntMax(...pools_pair.map((pair) => calcPairRate({ a: pair.a + pair.b - pair.b_min_reserve, b: pair.b_min_reserve, fee_paid_in_a: pair.fee_paid_in_a, a_min_reserve: pair.a_min_reserve, b_min_reserve: pair.b_min_reserve }, rate_denominator).numerator + 1n));
@@ -372,7 +374,23 @@ export default class ExchangeLab {
           throw new InvalidProgramState('summary == null!!');
         }
         rate_lower_bound = result.rate.numerator;
-        candidate_trade = { entries: result.trade, rate: result.rate, summary };
+        if (summary.supply < amount) {
+          // fill to order size
+          const tmp = fillTradeToTargetSupplyFromPairsWithFillingStepper(result.trade, amount, bigIntMax(1n, (amount - summary.supply) / stepper_size), rate_denominator);
+          if (tmp != null) {
+            if (tmp.length == 0) {
+              throw new InsufficientFunds(`Can't acquire any token with the given target supply.`);
+            }
+            const summary = calcTradeSummary(tmp.map((a) => a.trade), rate_denominator);
+            if (summary == null) {
+              /* c8 ignore next */
+              throw new InvalidProgramState('summary == null!!');
+            }
+            candidate_trade = { entries: tmp, rate: null, summary };
+          }
+        } else {
+          candidate_trade = { entries: result.trade, rate: result.rate, summary };
+        }
       }
     }
     /*
@@ -397,7 +415,6 @@ export default class ExchangeLab {
       }
     }
     // fill up the remaining amount if needed
-    const stepper_size = 10n;
     if (candidate_trade == null) {
       const tmp = fillTradeToTargetSupplyFromPairsWithFillingStepper(pools_pair.map((pair) => ({ pair, trade: null })), amount, bigIntMax(1n, amount / stepper_size), rate_denominator);
       if (tmp != null) {
@@ -410,29 +427,6 @@ export default class ExchangeLab {
           throw new InvalidProgramState('summary == null!!');
         }
         candidate_trade = { entries: tmp, rate: null, summary };
-      }
-    } else {
-      if (candidate_trade.summary.supply < amount) {
-        // fill to order size
-        const pair_trade_list: Array<{ pair: PoolPair, trade: AbstractTrade }> = candidate_trade.entries;
-        const entries = pools_pair.map((pair) => {
-          const pair_trade = pair_trade_list.find((a) => (a.pair as any).pool == pair.pool);
-          return { pair, trade: pair_trade != null ? pair_trade.trade : null };
-        });
-        const tmp = fillTradeToTargetSupplyFromPairsWithFillingStepper(entries, amount, bigIntMax(1n, (amount - candidate_trade.summary.supply) / stepper_size), rate_denominator);
-        if (tmp == null) {
-          candidate_trade = null;
-        } else {
-          if (tmp.length == 0) {
-            throw new InsufficientFunds(`Can't acquire any token with the given target supply.`);
-          }
-          const summary = calcTradeSummary(tmp.map((a) => a.trade), rate_denominator);
-          if (summary == null) {
-            /* c8 ignore next */
-            throw new InvalidProgramState('summary == null!!');
-          }
-          candidate_trade = { entries: tmp, rate: null, summary };
-        }
       }
     }
     if (candidate_trade == null) {

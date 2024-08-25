@@ -422,9 +422,8 @@ k  b^2 = K / rate
  */
 
 // lower_bound >= result.demand < upper_bound
-export const approxAvailableAmountInAPairAtTargetRate = (pair: PoolPair, target_rate: Fraction, lower_bound: bigint, upper_bound: bigint): AbstractTrade | null => {
+export const approxAvailableAmountInAPairAtTargetRate = (pair: PoolPair, target_rate: Fraction, lower_bound: bigint, upper_bound: bigint): bigint | null => {
   let best_guess = null;
-  let trade = null
   const K = pair.a * pair.b;
   while (lower_bound < upper_bound) {
     const guess = lower_bound + (upper_bound - lower_bound) / 2n;
@@ -441,14 +440,7 @@ export const approxAvailableAmountInAPairAtTargetRate = (pair: PoolPair, target_
       best_guess = guess;
     }
   }
-  if (best_guess != null) {
-    trade = calcTradeWithTargetDemandFromAPair(pair, best_guess);
-    if (trade == null) {
-      /* c8 ignore next */
-      throw new InvalidProgramState('derived trade from best guess is null!!')
-    }
-  }
-  return trade;
+  return best_guess;
 };
 
 
@@ -527,12 +519,20 @@ export const fillTradeToTargetDemandFromPairsWithFillingStepper = (initial_pair_
     return entry;
   }).filter((a) => a.trade != null) as Array<{ pair: PoolPair, trade: AbstractTrade }>;
 };
-export const constructTradeInPoolsBelowTargetRateInDemandRange = (pools_set: Array<{ pair: PoolPair, lower_bound: bigint, upper_bound: bigint }>, rate: Fraction): Array<{ pair: PoolPair, trade: AbstractTrade }> => {
+export const constructTradeInPoolsBelowTargetRateInDemandRange = (pools_set: Array<{ pair: PoolPair, lower_bound: bigint, upper_bound: bigint }>, rate: Fraction): Array<{ pair: PoolPair, trade: AbstractTrade, best_guess: bigint }> => {
   return pools_set.map((a) => {
-    let trade = approxAvailableAmountInAPairAtTargetRate(a.pair, rate, a.lower_bound, a.upper_bound);
-    return { pair: a.pair, trade };
+    let best_guess = approxAvailableAmountInAPairAtTargetRate(a.pair, rate, a.lower_bound, a.upper_bound);
+    let trade = null;
+    if (best_guess != null) {
+      trade = calcTradeWithTargetDemandFromAPair(a.pair, best_guess);
+      if (trade == null) {
+        /* c8 ignore next */
+        throw new InvalidProgramState('derived trade from best guess is null!!')
+      }
+    }
+    return { pair: a.pair, trade, best_guess };
   })
-    .filter((a)=> a.trade != null) as Array<{ pair: PoolPair, trade: AbstractTrade }>;
+    .filter((a)=> a.trade != null) as Array<{ pair: PoolPair, trade: AbstractTrade, best_guess: bigint }>;
 };
 export const bestRateToTradeInPoolsForTargetDemand = (pools_set: Array<{ pair: PoolPair, lower_bound: bigint, upper_bound: bigint }>, amount: bigint, lower_bound: bigint, upper_bound: bigint, rate_denominator: bigint): { trade: Array<{ pair: PoolPair, trade: AbstractTrade }>, rate: Fraction } | null  => {
   /*
@@ -540,7 +540,7 @@ export const bestRateToTradeInPoolsForTargetDemand = (pools_set: Array<{ pair: P
     The successive approximation algorithm is used to find lowest rate to acquire the most.
     Based on available amount at a rate.
   */
-  let candidate_trade: Array<{ pair: PoolPair, trade: AbstractTrade }> | null = null;
+  let candidate_trade: Array<{ pair: PoolPair, trade: AbstractTrade, best_guess: bigint }> | null = null;
   let best_rate = null;
   let highest_found_demand = 0n;
   let no_change_counter = 0, previous_demand_sum = 0n;
@@ -553,7 +553,6 @@ export const bestRateToTradeInPoolsForTargetDemand = (pools_set: Array<{ pair: P
       continue;
     }
     const next_demand_sum = next_candidate_sum.demand;
-
     if (next_demand_sum <= amount) {
       lower_bound = guess + 1n;
       if (next_demand_sum > 0 && next_demand_sum > highest_found_demand) {
@@ -564,7 +563,7 @@ export const bestRateToTradeInPoolsForTargetDemand = (pools_set: Array<{ pair: P
       pools_set = pools_set.map((entry) => {
         const target_pair_trade = next_candidate_trade.find((a) => a.pair == entry.pair);
         if (target_pair_trade != null) {
-          entry = { pair: entry.pair, lower_bound: target_pair_trade.trade.demand + (!entry.pair.fee_paid_in_a ? target_pair_trade.trade.trade_fee : 0n), upper_bound: entry.upper_bound };
+          entry = { pair: entry.pair, lower_bound: target_pair_trade.best_guess, upper_bound: entry.upper_bound };
         }
         return entry;
       });
@@ -573,22 +572,24 @@ export const bestRateToTradeInPoolsForTargetDemand = (pools_set: Array<{ pair: P
       pools_set = pools_set.map((entry) => {
         const target_pair_trade = next_candidate_trade.find((a) => a.pair == entry.pair);
         if (target_pair_trade != null) {
-          entry = { pair: entry.pair, lower_bound: entry.lower_bound, upper_bound: bigIntMin(target_pair_trade.trade.demand + (!entry.pair.fee_paid_in_a ? target_pair_trade.trade.trade_fee : 0n) + 1n, entry.pair.b - entry.pair.b_min_reserve + 1n) };
+          entry = { pair: entry.pair, lower_bound: entry.lower_bound, upper_bound: bigIntMin(target_pair_trade.best_guess + 1n, entry.pair.b - entry.pair.b_min_reserve + 1n) };
         }
         return entry;
       });
     }
-    if (previous_demand_sum == next_demand_sum) {
-      if (++no_change_counter > 1) {
-        break; // no more room for improvement
+    if (candidate_trade != null) {
+      if (previous_demand_sum == next_demand_sum) {
+        if (++no_change_counter > 1) {
+          break; // no more room for improvement
+        }
+      } else {
+        previous_demand_sum = next_demand_sum;
+        no_change_counter = 0;
       }
-    } else {
-      previous_demand_sum = next_demand_sum;
-      no_change_counter = 0;
     }
   }
   return candidate_trade == null ? null : {
-    trade: candidate_trade,
+    trade: candidate_trade.map((a) => ({ pair: a.pair, trade: a.trade })),
     rate: { numerator: best_rate as bigint, denominator: rate_denominator },
   };
 }
@@ -693,7 +694,7 @@ export const eliminateNetNegativePoolsInATradeWithTargetSupply = (pool_fixed_cos
 
 const eliminateNetNegativePoolsInATradeATarget = (
   pool_fixed_cost: { supply: bigint, demand: bigint },
-  candidate_trade: Array<{ pair: PoolPair, trade: AbstractTrade }>,
+  input_trade: Array<{ pair: PoolPair, trade: AbstractTrade }>,
   amount: bigint, rate_lower_bound: bigint, rate_upper_bound: bigint, rate_denominator: bigint,
   target: {
     name: 'demand' | 'supply',
@@ -710,9 +711,10 @@ const eliminateNetNegativePoolsInATradeATarget = (
     }
     return (trade.supply + pool_fixed_cost.supply) * rate_denominator  / (trade.demand - pool_fixed_cost.demand) - (trade.supply * rate_denominator / trade.demand);
   };
-  let entries: Array<{ pair: PoolPair, lower_bound: bigint, upper_bound: bigint, trade: AbstractTrade }>;
+  type EntryType = { pair: PoolPair, lower_bound: bigint, upper_bound: bigint, trade: AbstractTrade };
+  let entries: EntryType[];
   { // sort by changeInRateWithFixedCost in asc order
-    const tmp: Array<{ item: any, value: bigint }> = candidate_trade.map((a) => ({ item: a, value: changeInRateWithFixedCost(a.trade) }))
+    const tmp: Array<{ item: any, value: bigint }> = input_trade.map((a) => ({ item: a, value: changeInRateWithFixedCost(a.trade) }))
           .filter((a) => a.value != null) as Array<{ item: any, value: bigint }>;
     bigIntArraySortPolyfill(tmp, (a, b) => a.value - b.value);
     entries = tmp.map((a) => ({ pair: a.item.pair, lower_bound: a.item.trade[target.name], upper_bound: (target.name == 'demand' ? a.item.pair.b - a.item.pair.b_min_reserve : requiredSupplyToMaxOutAPair(a.item.pair)), trade: a.item.trade })) as any;
@@ -721,14 +723,7 @@ const eliminateNetNegativePoolsInATradeATarget = (
   if (entries.length == 0 || entries_sum == null) {
     return { keep_pool_trade_list: [], trade: [], rate: { numerator: 0n, denominator: rate_denominator } };
   }
-  const entries_avg_rate = (entries_sum.supply * rate_denominator) / entries_sum.demand;
-  let best_candidate: { keep_pool_trade_list: Array<{ pair: PoolPair, trade: AbstractTrade }>, trade: Array<{ pair: PoolPair, trade: AbstractTrade }>, rate: Fraction } | null = null;
-  let lower_bound = 1;
-  let upper_bound = entries.length - 1;
-  while (lower_bound < upper_bound) {
-    const guess = Math.floor(lower_bound + (upper_bound - lower_bound) / 2);
-    const keep_candidate = entries.slice(0, guess);
-    const eliminate_candidate = entries.slice(guess);
+  const elimiateSub = (keep_candidate: EntryType[], eliminate_candidate: EntryType[]): { candidate: { trade: Array<{ pair: PoolPair, trade: AbstractTrade }>, rate: Fraction }, sum: AbstractTrade, rate_with_benefit: bigint } | null => {
     let next_candidate = target.bestRate(keep_candidate, amount, rate_lower_bound, rate_upper_bound, rate_denominator);
     let next_candidate_sum = next_candidate == null ? null : sumAbstractTradeList(next_candidate.trade.map((a) => a.trade));
     if (next_candidate != null && next_candidate_sum != null && next_candidate_sum[target.name] < amount) {
@@ -741,25 +736,101 @@ const eliminateNetNegativePoolsInATradeATarget = (
       }
     }
     if (next_candidate == null || next_candidate_sum == null) {
-      lower_bound = guess + 1;
-      continue;
+      return null;
     }
     const next_candidate_avg_rate_with_benefit = (next_candidate_sum.supply - (pool_fixed_cost.supply * BigInt(eliminate_candidate.length))) * rate_denominator / (next_candidate_sum.demand + (pool_fixed_cost.demand * BigInt(eliminate_candidate.length)));
-    if (next_candidate_avg_rate_with_benefit < entries_avg_rate) {
-      upper_bound = guess;
-      best_candidate = {
-        keep_pool_trade_list: keep_candidate.map((a) => ({ pair: a.pair, trade: a.trade })),
-        trade: next_candidate.trade,
-        rate: next_candidate.rate,
-      };
-    } else {
-      lower_bound = guess + 1;
+    counter++;
+    return { candidate: next_candidate, sum: next_candidate_sum, rate_with_benefit: next_candidate_avg_rate_with_benefit };
+  };
+  const entries_avg_rate = (entries_sum.supply * rate_denominator) / entries_sum.demand;
+  let counter = 0;
+  let candidate: { keep_pool_trade_list: Array<{ pair: PoolPair, trade: AbstractTrade }>, trade: Array<{ pair: PoolPair, trade: AbstractTrade }>, rate: Fraction, rate_with_benefit: bigint, split_index: number } | null = null;
+  { // find the first candidate
+    let lower_bound = 1;
+    let upper_bound = entries.length;
+    while (lower_bound < upper_bound) {
+      const guess = lower_bound + Math.floor((upper_bound - lower_bound) / 2);
+      const keep_candidate = entries.slice(0, guess);
+      const eliminate_candidate = entries.slice(guess);
+      const result = elimiateSub(keep_candidate, eliminate_candidate);
+      if (result != null && result.rate_with_benefit < entries_avg_rate) {
+        candidate = {
+          keep_pool_trade_list: keep_candidate.map((a) => ({ pair: a.pair, trade: a.trade })),
+          trade: result.candidate.trade,
+          rate: result.candidate.rate,
+          rate_with_benefit: result.rate_with_benefit,
+          split_index: guess,
+        };
+        break;
+      } else {
+        lower_bound = guess + 1;
+      }
     }
   }
-  if (best_candidate == null) {
+  if (candidate != null) {
+    const bounds = [ { side: 'left', lower: 1, upper: candidate.split_index }, { side: 'right', lower: candidate.split_index, upper: entries.length } ];
+    while (true) {
+      const abound = bounds.shift();
+      if (abound == null) {
+        break;
+      }
+      const guess = abound.lower + Math.floor((abound.upper - abound.lower) / 2);
+      const keep_candidate = entries.slice(0, guess);
+      const eliminate_candidate = entries.slice(guess);
+      const result = elimiateSub(keep_candidate, eliminate_candidate);
+      if (result != null && result.rate_with_benefit < candidate.rate_with_benefit) {
+        candidate = {
+          keep_pool_trade_list: keep_candidate.map((a) => ({ pair: a.pair, trade: a.trade })),
+          trade: result.candidate.trade,
+          rate: result.candidate.rate,
+          rate_with_benefit: result.rate_with_benefit,
+          split_index: guess,
+        };
+        for (let i = 0; i < bounds.length; ) {
+          const other_bound = bounds[i];
+          if (!other_bound) {
+            break;
+          }
+          if (other_bound.side == 'left') {
+            other_bound.upper = guess;
+          } else {
+            other_bound.lower = guess;
+          }
+          if (!(other_bound.lower < other_bound.upper)) {
+            bounds.splice(i, 1);
+          } else {
+            i++;
+          }
+        }
+        if (abound.side == 'left') {
+          abound.lower = guess + 1;
+        } else {
+          abound.upper = guess;
+        }
+        if (abound.lower < abound.upper) {
+          bounds.push(abound);
+        }
+      } else {
+        let lower, upper, side;
+        if (candidate.split_index < guess) {
+          lower = candidate.split_index;
+          upper = guess;
+          side = 'right';
+        } else {
+          lower = guess + 1;
+          upper = candidate.split_index;
+          side = 'left';
+        }
+        if (lower < upper) {
+          bounds.push({ lower, upper, side });
+        }
+      }
+    }
+  }
+  if (candidate == null) {
     throw new NotFoundError();
   }
-  return best_candidate;
+  return candidate;
 };
 
 /* Not used
@@ -899,8 +970,9 @@ export const calcTradeWithTargetSupplyFromAPair = (pair: PoolPair, amount: bigin
   } : null;
 };
 // lower_bound >= result.supply < upper_bound
-export const approxAvailableAmountInASupplyRangeForAPair = (pair: PoolPair, target_rate: Fraction, lower_bound: bigint, upper_bound: bigint): AbstractTrade | null => {
-  let best_trade = null
+export const approxAvailableAmountInASupplyRangeForAPair = (pair: PoolPair, target_rate: Fraction, lower_bound: bigint, upper_bound: bigint): { best_guess: bigint, trade: AbstractTrade } | null => {
+  let best_trade = null;
+  let best_guess = null;
   const K = pair.a * pair.b;
   while (lower_bound < upper_bound) {
     const guess = lower_bound + (upper_bound - lower_bound) / 2n;
@@ -920,17 +992,21 @@ export const approxAvailableAmountInASupplyRangeForAPair = (pair: PoolPair, targ
     } else {
       lower_bound = guess + 1n;
       best_trade = trade;
+      best_guess = guess;
     }
   }
-  return best_trade;
+  return best_trade != null && best_guess != null ? { trade: best_trade, best_guess } : null;
 };
 
-export const constructTradeInPoolsBelowTargetRateInSupplyRange = (pools_set: Array<{ pair: PoolPair, lower_bound: bigint, upper_bound: bigint }>, rate: Fraction): Array<{ pair: PoolPair, trade: AbstractTrade }> => {
+export const constructTradeInPoolsBelowTargetRateInSupplyRange = (pools_set: Array<{ pair: PoolPair, lower_bound: bigint, upper_bound: bigint }>, rate: Fraction): Array<{ pair: PoolPair, trade: AbstractTrade, best_guess: bigint }> => {
   return pools_set.map((a) => {
-    let trade = approxAvailableAmountInASupplyRangeForAPair(a.pair, rate, a.lower_bound, a.upper_bound);
-    return { pair: a.pair, trade };
+    const result = approxAvailableAmountInASupplyRangeForAPair(a.pair, rate, a.lower_bound, a.upper_bound);
+    if (result != null) {
+      return { pair: a.pair, trade: result.trade, best_guess: result.best_guess };
+    }
+    return { pair: a.pair, trade: null, best_guess: null };
   })
-    .filter((a)=> a.trade != null) as Array<{ pair: PoolPair, trade: AbstractTrade }>;
+    .filter((a)=> a.trade != null) as Array<{ pair: PoolPair, trade: AbstractTrade, best_guess: bigint }>;
 };
 export const requiredSupplyToMaxOutAPair = (pair: PoolPair): bigint => {
   const K = pair.a * pair.b;
@@ -981,7 +1057,7 @@ export const bestRateToTradeInPoolsForTargetSupply = (pools_set: Array<{ pair: P
       pools_set = pools_set.map((entry) => {
         const target_pair_trade = next_candidate_trade.find((a) => a.pair == entry.pair);
         if (target_pair_trade != null) {
-          entry = { pair: entry.pair, lower_bound: target_pair_trade.trade.supply, upper_bound: entry.upper_bound };
+          entry = { pair: entry.pair, lower_bound: target_pair_trade.best_guess, upper_bound: entry.upper_bound };
         }
         return entry;
       });
@@ -990,18 +1066,20 @@ export const bestRateToTradeInPoolsForTargetSupply = (pools_set: Array<{ pair: P
       pools_set = pools_set.map((entry) => {
         const target_pair_trade = next_candidate_trade.find((a) => a.pair == entry.pair);
         if (target_pair_trade != null) {
-          entry = { pair: entry.pair, lower_bound: entry.lower_bound, upper_bound: bigIntMin(target_pair_trade.trade.supply + 1n, pair_max_supply_map.get(entry.pair) || requiredSupplyToMaxOutAPair(entry.pair)) };
+          entry = { pair: entry.pair, lower_bound: entry.lower_bound, upper_bound: bigIntMin(target_pair_trade.best_guess + 1n, pair_max_supply_map.get(entry.pair) || requiredSupplyToMaxOutAPair(entry.pair)) };
         }
         return entry;
       });
     }
-    if (previous_supply_sum == next_supply_sum) {
-      if (++no_change_counter > 1) {
-        break; // no more room for improvement
+    if (candidate_trade != null) {
+      if (previous_supply_sum == next_supply_sum) {
+        if (++no_change_counter > 1) {
+          break; // no more room for improvement
+        }
+      } else {
+        previous_supply_sum = next_supply_sum;
+        no_change_counter = 0;
       }
-    } else {
-      previous_supply_sum = next_supply_sum;
-      no_change_counter = 0;
     }
   }
   return candidate_trade == null ? null : {
@@ -1102,19 +1180,24 @@ export const bestRateWithEliminateBasedOnFixedCostAndFillTradeForTargetSupply = 
   if (result != null) {
     let tmp_sum = sumAbstractTradeList(result.trade.map((a) => a.trade));
     if (result != null && tmp_sum != null) {
-      const eliminate_result = eliminateNetNegativePoolsInATradeWithTargetSupply(pool_fixed_cost, result.trade, amount, result.rate.numerator, upper_bound, rate_denominator);
-      if (eliminate_result != null) {
-        return eliminate_result;
-      } else {
-        if (tmp_sum.supply < amount) {
-          const tmp = fillTradeToTargetSupplyFromPairsWithFillingStepper(result.trade, amount, amount - tmp_sum.supply, rate_denominator);
-          if (tmp != null && tmp.length > 0) {
-            return { trade: tmp, rate: result.rate };
-          }
-        } else {
-          return result;
+      if (tmp_sum.supply < amount) {
+        const tmp = fillTradeToTargetSupplyFromPairsWithFillingStepper(result.trade, amount, amount - tmp_sum.supply, rate_denominator);
+        if (tmp == null || tmp.length == 0) {
+          return null;
+        }
+        result.trade = tmp;
+      }
+      try {
+        const eliminate_result = eliminateNetNegativePoolsInATradeWithTargetSupply(pool_fixed_cost, result.trade, amount, result.rate.numerator, upper_bound, rate_denominator);
+        if (eliminate_result != null) {
+          return eliminate_result;
+        }
+      } catch (err) {
+        if (!(err instanceof NotFoundError)) {
+          throw err;
         }
       }
+      return result;
     }
   }
   return null;
@@ -1125,19 +1208,23 @@ export const bestRateWithEliminateBasedOnFixedCostAndFillTradeForTargetDemand = 
   if (result != null) {
     let tmp_sum = sumAbstractTradeList(result.trade.map((a) => a.trade));
     if (result != null && tmp_sum != null) {
-      const eliminate_result = eliminateNetNegativePoolsInATradeWithTargetDemand(pool_fixed_cost, result.trade, amount, result.rate.numerator, upper_bound, rate_denominator);
-      if (eliminate_result != null) {
-        return eliminate_result;
-      } else {
-        if (tmp_sum.supply < amount) {
-          const tmp = fillTradeToTargetDemandFromPairsWithFillingStepper(result.trade, amount, amount - tmp_sum.supply, rate_denominator);
-          if (tmp != null) {
-            return { trade: tmp, rate: result.rate };
-          }
-        } else {
-          return result;
+      if (tmp_sum.supply < amount) {
+        const tmp = fillTradeToTargetDemandFromPairsWithFillingStepper(result.trade, amount, amount - tmp_sum.supply, rate_denominator);
+        if (tmp != null) {
+          result.trade = tmp;
         }
       }
+      try {
+        const eliminate_result = eliminateNetNegativePoolsInATradeWithTargetDemand(pool_fixed_cost, result.trade, amount, result.rate.numerator, upper_bound, rate_denominator);
+        if (eliminate_result != null) {
+          return eliminate_result;
+        }
+      } catch (err) {
+        if (!(err instanceof NotFoundError)) {
+          throw err;
+        }
+      }
+      return result;
     }
   }
   return null;

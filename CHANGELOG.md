@@ -2,6 +2,13 @@
 
 All notable changes of this module is documented in this file, Documenting changelog has start from version `0.0.9`.
 
+## [0.0.12] - 2024-08-25
+
+### FIXED
+
+- Improvements & fixes in best rate for target supply & demand methods
+- Improvements in eliminate net negative pools method
+
 ## [0.0.10] & [0.0.11] - 2024-08-05
 
 ### FIXED
