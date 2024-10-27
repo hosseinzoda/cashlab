@@ -83,7 +83,7 @@ export default class ExchangeLab {
   _compiler: libauth.CompilerBCH;
   constructor () {
     // default lab parameters
-    this._rate_denominator = 10000000000n;
+    this._rate_denominator = 10000000000000n;
     // init libauth cauldron template compiler
     const template_result = libauth.importWalletTemplate(cauldron_libauth_template_data);
     if (typeof template_result == 'string') {

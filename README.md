@@ -3,9 +3,16 @@
 - construct cauldron exchange trades, generate cauldron trade transactions.
 
 
+# Install
+
+```bash
+npm install cashlab
+```
+
+
 # Cauldron example
 
-```
+```ts
 import { cauldron, TokenId, NATIVE_BCH_TOKEN_ID, Fraction } from 'cashlab';
 import type { PoolV0Parameters, PoolV0, TradeResult, TradeTxResult } from 'cashlab/build/cauldron/types.js';
 
