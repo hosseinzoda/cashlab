@@ -938,7 +938,7 @@ export const calcTradeWithTargetSupplyFromAPair = (pair: PoolPair, amount: bigin
     const pre_a1 = pair.a + amount - calcTradeFee(amount);
     const b1 = ceilingValueOfBigIntDivision(K, pre_a1);
     const a1 = ceilingValueOfBigIntDivision(K, b1);
-    if (a1 <= pair.a || b1 >= pair.b) {
+    if (a1 <= pair.a || b1 >= pair.b || b1 < pair.b_min_reserve) {
       return null; // given supply is not enough to acquire min demand
     }
     pair_a_1 = __pairIncludeFeeForTarget(a1, pair.a);
@@ -957,7 +957,7 @@ export const calcTradeWithTargetSupplyFromAPair = (pair: PoolPair, amount: bigin
     pair_a_1 = a1;
     pair_b_1 = tmp.value;
     trade_fee = tmp.trade_fee;
-    if (pair.b - pair_b_1 <= 0n) {
+    if (pair.b - pair_b_1 <= 0n || pair_b_1 < pair.b_min_reserve) {
       return null; // given supply is not enough to acquire min demand
     }
   }
