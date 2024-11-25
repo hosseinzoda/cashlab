@@ -1,11 +1,12 @@
 {
   "name": "cashlab",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "A module to write, inspect & validate bch contracts/transactions.",
   "type": "module",
   "main": "./build/index.js",
   "types": "./build/index.d.ts",
   "scripts": {
+    "prepare": "npm run build",
     "build": "tsc -p config/tsconfig.json",
     "test": "c8 ava",
     "test:xc8": "ava",
@@ -39,6 +40,8 @@
     "typescript": "^5.4.5"
   },
   "files": [
+    "config",
+    "src",
     "build",
     "!build/.tsbuildinfo",
     "!build/**/*.map",
@@ -68,6 +71,6 @@
     "@bitauth/libauth": "^3.0.0"
   },
   "volta": {
-    "node": "20.13.1"
+    "node": "20.18.0"
   }
 }

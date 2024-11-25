@@ -2,6 +2,16 @@
 
 All notable changes of this module is documented in this file, Documenting changelog has start from version `0.0.9`.
 
+## [0.0.17] - 2024-11-21
+
+### ADDED
+
+- Ability to set preferred bch amount in token outputs.
+
+### FIXED
+
+- The generate tx process of write-chained-txs to account for the estimated txfee
+
 ## [0.0.12] - 2024-08-25
 
 ### FIXED

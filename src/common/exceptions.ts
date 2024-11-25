@@ -93,7 +93,13 @@ export class NotFoundError extends Exception {
 };
 export class ValueError extends Exception { };
 export class NotImplemented extends Exception { };
-export class InsufficientFunds extends Exception { };
+export class InsufficientFunds extends Exception {
+  required_amount: undefined | bigint;
+  constructor (message: string | null, payload?: any) {
+    super(message || 'null', payload);
+    this.required_amount = payload?.required_amount == null ? undefined : BigInt(payload.required_amount);
+  }
+};
 export class InvalidProgramState extends Exception { };
 export class BurnTokenException extends Exception {
   constructor (message?: string) {

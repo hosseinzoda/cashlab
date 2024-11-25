@@ -1,6 +1,6 @@
 import type { TokenId, PayoutRule, Output, OutputWithFT, SpendableCoin } from '../common/types.js';
 import { NATIVE_BCH_TOKEN_ID, SpendableCoinType, PayoutAmountRuleType } from '../common/constants.js';
-import { InvalidProgramState, ValueError, BurnTokenException } from '../common/exceptions.js';
+import { InvalidProgramState, ValueError, BurnTokenException, InsufficientFunds } from '../common/exceptions.js';
 import { convertTokenIdToUint8Array } from '../common/util.js';
 import * as libauth from '@bitauth/libauth';
 const { compactUintPrefixToLength, bigIntToCompactUint } = libauth;
@@ -8,11 +8,39 @@ import { buildPoolV0UnlockingBytecode } from './binutil.js';
 import type { BCHCauldronContext, PoolTrade, TradeTxResult } from './types.js';
 
 export const writeTradeTx = (context: BCHCauldronContext, compiler: libauth.CompilerBCH, pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_rules: PayoutRule[], data_locking_bytecode: Uint8Array | null, txfee_per_byte: number | bigint): TradeTxResult => {
-  txfee_per_byte = typeof txfee_per_byte == 'bigint' ? txfee_per_byte : BigInt(txfee_per_byte);
-  if (txfee_per_byte < 0n) {
+  const _txfee_per_byte = typeof txfee_per_byte == 'bigint' ? txfee_per_byte : BigInt(txfee_per_byte);
+  if (_txfee_per_byte < 0n) {
     throw new ValueError('txfee should be greater than or equal to zero');
   }
-  // validate pool_trade_list
+  const aggregate_payout_list = validateTradePoolListAndCalcAggregatePayouts(pool_trade_list, input_coins);
+  const calc_tx_size_cache = initCalcTxSizeCache();
+  const calcTxFeeWithOutputs = (outputs: Output[]): bigint => {
+    const tx_size = calcTxSize(pool_trade_list, input_coins, outputs, data_locking_bytecode, calc_tx_size_cache);
+    return BigInt(tx_size) * _txfee_per_byte;
+  };
+  // build the payout outputs, apply payout rules
+  const { payout_outputs, txfee, token_burns } = buildPayoutOutputs(context, payout_rules, aggregate_payout_list, calcTxFeeWithOutputs, true);
+  // construct the transaction
+  const { result, source_outputs, payouts_info } = generateExchangeTx(compiler, pool_trade_list, input_coins, payout_outputs.map((a) => a.output), data_locking_bytecode);
+  if (!result.success) {
+    /* c8 ignore next */
+    throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(result.errors, null, '  '));
+  }
+  return {
+    txbin: libauth.encodeTransaction(result.transaction),
+    txfee,
+    payouts_info: payouts_info.map((a) => ({
+      output: a.output,
+      index: a.index,
+      payout_rule: (payout_outputs.find((b) => b.output == a.output) as any).payout_rule as PayoutRule,
+    })),
+    token_burns,
+    libauth_source_outputs: source_outputs,
+    libauth_generated_transaction: result.transaction,
+  };
+};
+
+export const validateTradePoolListAndCalcAggregatePayouts = (pool_trade_list: PoolTrade[], input_coins: SpendableCoin[]): Array<{ token_id: TokenId, amount: bigint }> => {
   const aggregate_balance_list: Array<{ token_id: TokenId, offer: bigint, take: bigint }> = [
     {
       token_id: NATIVE_BCH_TOKEN_ID,
@@ -31,6 +59,7 @@ export const writeTradeTx = (context: BCHCauldronContext, compiler: libauth.Comp
     }
     return output;
   };
+  // validate pool_trade_list
   for (const pool_trade of pool_trade_list) {
     if (pool_trade.supply_token_id == NATIVE_BCH_TOKEN_ID) {
       if (pool_trade.demand_token_id == NATIVE_BCH_TOKEN_ID) {
@@ -125,37 +154,43 @@ export const writeTradeTx = (context: BCHCauldronContext, compiler: libauth.Comp
       });
     }
   }
-  const calcTxFeeWithOutputs = (outputs: Output[]): bigint => {
-    const max_tx_size = calcMaxTxSize(pool_trade_list, input_coins, outputs, data_locking_bytecode);
-    return BigInt(max_tx_size) * BigInt(txfee_per_byte);
-  };
-  // build the payout outputs, apply payout rules
-  const { payout_outputs, txfee, token_burns } = buildPayoutOutputs(context, payout_rules, aggregate_payout_list, calcTxFeeWithOutputs, true);
-  // construct the transaction
-  const { result, source_outputs, payouts_info } = generateExchangeTx(compiler, pool_trade_list, input_coins, payout_outputs.map((a) => a.output), data_locking_bytecode);
-  if (!result.success) {
-    /* c8 ignore next */
-    throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(result.errors, null, '  '));
-  }
-  return {
-    txbin: libauth.encodeTransaction(result.transaction),
-    txfee,
-    payouts_info: payouts_info.map((a) => ({
-      output: a.output,
-      index: a.index,
-      payout_rule: (payout_outputs.find((b) => b.output == a.output) as any).payout_rule as PayoutRule,
-    })),
-    token_burns,
-    libauth_source_outputs: source_outputs,
-    libauth_generated_transaction: result.transaction,
-  };
+  return aggregate_payout_list;
 };
 
-const calcMaxTxSize = (pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], outputs: Output[], data_locking_bytecode: Uint8Array | null): bigint => {
+const calcPoolTradeSizeInATx = (pool_trade: PoolTrade): number => {
+  const token_amount: bigint = pool_trade.pool.output.token.amount  +
+    (pool_trade.supply_token_id == NATIVE_BCH_TOKEN_ID ? pool_trade.demand * -1n : pool_trade.supply);
+  // input size = txhash_size + index_size + sizeof_unlocking_size + unlocking_size + sequence_num_size
+  const input_size = 32 + 4 + 1 + 69 + 4;
+  // output size = amount_size + sizeof_locking_size + locking_size + token_category + token_amount_size
+  const output_size = 8 + 1 + 35 + 34 + compactUintPrefixToLength(bigIntToCompactUint(token_amount)[0] as number);
+  return input_size + output_size;
+};
+
+type CalcTxSizeCache = {
+  size_map: WeakMap<object, number>
+};
+
+export const initCalcTxSizeCache = (): CalcTxSizeCache => {
+  return { size_map: new WeakMap() }
+};
+
+export const calcTxSize = (pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], outputs: Output[], data_locking_bytecode: Uint8Array | null, cache: CalcTxSizeCache | undefined): number => {
   if (input_coins.reduce((a, b) => a + (b.type == SpendableCoinType.P2PKH ? 0 : 1), 0) > 0) {
     throw new Error('input_coins has an unsupported type!');
   }
-  const pools_io_size = pool_trade_list.length * 197
+  const pools_io_size = pool_trade_list.reduce((sum: number, item: PoolTrade) => {
+    if (cache != null) {
+      let size: number | undefined = cache.size_map.get(item);
+      if (size == null) {
+        size = calcPoolTradeSizeInATx(item);
+        cache.size_map.set(item, size);
+      }
+      return sum + size;
+    } else {
+      return sum + calcPoolTradeSizeInATx(item);
+    }
+  }, 0);
   // sizeof inputs/outputs size
   const sizeof_inputs_size = compactUintPrefixToLength(bigIntToCompactUint(BigInt(input_coins.length + pool_trade_list.length))[0] as number);
   const sizeof_outputs_size = compactUintPrefixToLength(bigIntToCompactUint(BigInt(outputs.length + pool_trade_list.length + (data_locking_bytecode != null ? 1 : 0)))[0] as number);
@@ -163,21 +198,21 @@ const calcMaxTxSize = (pool_trade_list: PoolTrade[], input_coins: SpendableCoin[
   const p2pkh_unlocking_size = 1 + 65 + 1 + 33;
   // input_size = txhash_size + index_size + sizeof_unlocking_size + unlocking_size + sequence_num_size
   const p2pkh_input_size = 32 + 4 + 1 + p2pkh_unlocking_size + 4;
-  const inputs_size = input_coins.length * (p2pkh_input_size);
+  const inputs_size = input_coins.length * p2pkh_input_size;
   // outputs size
   let outputs_size = 0;
   for (const output of outputs) {
     const output_has_ft = output.token != null;
-    outputs_size += 8 + compactUintPrefixToLength(bigIntToCompactUint(BigInt(output.locking_bytecode.length))[0] as number) + output.locking_bytecode.length + (output_has_ft ? 34 + 9 : 0);
+    outputs_size += 8 + compactUintPrefixToLength(bigIntToCompactUint(BigInt(output.locking_bytecode.length))[0] as number) + output.locking_bytecode.length + (output_has_ft ? 34 + compactUintPrefixToLength(bigIntToCompactUint((output as OutputWithFT).token.amount)[0] as number) : 0);
   }
   if (data_locking_bytecode != null) {
     outputs_size += 8 + compactUintPrefixToLength(bigIntToCompactUint(BigInt(data_locking_bytecode.length))[0] as number) + data_locking_bytecode.length;
   }
   // tx_size = tx_version_size + inputs_size + outputs_size + tx_locktime_size
-  return BigInt(4 + sizeof_inputs_size + sizeof_outputs_size + pools_io_size + inputs_size + outputs_size + 4);
+  return 4 + sizeof_inputs_size + sizeof_outputs_size + pools_io_size + inputs_size + outputs_size + 4;
 };
 
-const buildPayoutOutputs = (context: BCHCauldronContext, payout_rules: PayoutRule[], aggregate_payout_list: Array<{ token_id: TokenId, amount: bigint }>, calcTxFeeWithOutputs: (outputs: Output[]) => bigint, verify_payouts_are_paid: boolean): { txfee: bigint, payout_outputs: Array<{ output: Output, payout_rule: PayoutRule }>, token_burns: Array<{ token_id: TokenId, amount: bigint }> } => {
+export const buildPayoutOutputs = (context: BCHCauldronContext, payout_rules: PayoutRule[], aggregate_payout_list: Array<{ token_id: TokenId, amount: bigint }>, calcTxFeeWithOutputs: (outputs: Output[]) => bigint, verify_payouts_are_paid: boolean): { txfee: bigint, payout_outputs: Array<{ output: Output, payout_rule: PayoutRule }>, token_burns: Array<{ token_id: TokenId, amount: bigint }> } => {
   aggregate_payout_list = structuredClone(aggregate_payout_list);
   const token_burns: Array<{ token_id: TokenId, amount: bigint }> = [];
   const payout_outputs: Array<{ output: Output, payout_rule: PayoutRule }> = [];
@@ -214,9 +249,16 @@ const buildPayoutOutputs = (context: BCHCauldronContext, payout_rules: PayoutRul
         throw new InvalidProgramState('native token is not in aggregate_payout_list!!')
       }
       const min_amount = context.getOutputMinAmount(output);
-      // set the amount to dust limit if amount is -1
       if (output.amount == -1n) {
-        output.amount = min_amount;
+        let amount = null;
+        if (payout_rule.token != null) {
+          amount = context.getPreferredTokenOutputBCHAmount(output);
+        }
+        if (amount == null) {
+          // set the amount to dust limit if amount is -1
+          amount = min_amount;
+        }
+        output.amount = amount;
       }
       if (output.amount < min_amount) {
         throw new ValueError(`Amount of a fixed payout rule is less than min amount (dust limit), amount: ${payout_rule.amount}, min: ${min_amount}`);
@@ -301,17 +343,32 @@ const buildPayoutOutputs = (context: BCHCauldronContext, payout_rules: PayoutRul
                 amount: payout.amount,
               },
             ]);
-            if (!txfee_paid && payout.amount < txfee) {
-              throw new ValueError(`Not enough change remained to pay the tx fee, fee = ${txfee}`)
-            }
-            if (payout.amount > txfee) {
+            if (!txfee_paid) {
+              if (payout.amount < txfee) {
+                const required_amount = txfee - payout.amount;
+                throw new InsufficientFunds(`Not enough change remained to pay the transaction fee, fee = ${txfee}, required amount: ${required_amount}`, { required_amount });
+              }
+              if (payout.amount > txfee) {
+                const payout_output = {
+                  locking_bytecode: payout_rule.locking_bytecode,
+                  amount: payout.amount - txfee,
+                };
+                const min_amount = context.getOutputMinAmount(payout_output);
+                if (payout_output.amount - txfee < min_amount) {
+                  const required_amount = min_amount - (payout_output.amount - txfee);
+                  throw new InsufficientFunds(`Not enough satoshis left to have the min amount in a (change) output, min: ${min_amount}, txfee: ${txfee}, required amount: ${required_amount}`, { required_amount });
+                }
+                payout_outputs.push({ output: payout_output, payout_rule });
+              }
+            } else {
               const payout_output = {
                 locking_bytecode: payout_rule.locking_bytecode,
-                amount: payout.amount - txfee,
-              }
+                amount: payout.amount,
+              };
               const min_amount = context.getOutputMinAmount(payout_output);
               if (payout_output.amount < min_amount) {
-                throw new ValueError(`Not enough satoshis left to have the min amount in a (change) output, min: ${min_amount}`);
+                const required_amount = min_amount - payout_output.amount;
+                throw new InsufficientFunds(`Not enough satoshis left to have the min amount in a (change) output, min: ${min_amount}, required amount: ${required_amount}`, { required_amount });
               }
               payout_outputs.push({ output: payout_output, payout_rule });
             }
@@ -329,11 +386,15 @@ const buildPayoutOutputs = (context: BCHCauldronContext, payout_rules: PayoutRul
                 },
                 amount: 0n,
               }
-              const min_amount = context.getOutputMinAmount(output);
-              if (native_payout.amount < min_amount) {
-                throw new ValueError(`Not enough satoshis left to have the min amount in a token (change) output, min: ${min_amount}`);
+              let utxo_bch_amount: bigint | null =  context.getPreferredTokenOutputBCHAmount(output);
+              if (utxo_bch_amount == null || native_payout.amount < utxo_bch_amount) {
+                utxo_bch_amount = context.getOutputMinAmount(output);
               }
-              output.amount = min_amount;
+              if (native_payout.amount < utxo_bch_amount) {
+                const required_amount = utxo_bch_amount - native_payout.amount;
+                throw new InsufficientFunds(`Not enough satoshis left to allocate min bch amount in a token (change) output, required amount: ${required_amount}`, { required_amount });
+              }
+              output.amount = utxo_bch_amount;
               payout_outputs.push({ output, payout_rule });
               native_payout.amount -= output.amount;
             } catch (err) {
@@ -361,7 +422,8 @@ const buildPayoutOutputs = (context: BCHCauldronContext, payout_rules: PayoutRul
           },
         ]);
         if (!txfee_paid && mixed_payout.bch.amount < txfee) {
-          throw new ValueError(`Not enough change remained to pay the tx fee, fee = ${txfee}`)
+          const required_amount = txfee - mixed_payout.bch.amount;
+          throw new InsufficientFunds(`Not enough change remained to pay the tx fee, fee = ${txfee}, required amount: ${required_amount}`, { required_amount });
         }
         const payout_output = {
           locking_bytecode: payout_rule.locking_bytecode,
@@ -372,8 +434,9 @@ const buildPayoutOutputs = (context: BCHCauldronContext, payout_rules: PayoutRul
           amount: mixed_payout.bch.amount - txfee,
         };
         const min_amount = context.getOutputMinAmount(payout_output);
-        if (payout_output.amount < min_amount) {
-          throw new ValueError(`Not enough satoshis left to have the min amount in a mixed (change) output, min: ${min_amount}`);
+        if (payout_output.amount - txfee < min_amount) {
+          const required_amount = min_amount - payout_output.amount;
+          throw new InsufficientFunds(`Not enough satoshis left to have the min amount in a mixed (change) output, min: ${min_amount}, required amount: ${required_amount}`, { required_amount });
         }
         txfee_paid = true;
         payout_outputs.push({ output: payout_output, payout_rule });
@@ -473,7 +536,7 @@ const constructPoolTxSIO = (pool_trade: PoolTrade): { source_output: libauth.Out
   return { input, output, source_output };
 };
 
-const generateExchangeTx = (compiler: libauth.CompilerBCH, input_pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_outputs:  Output[], data_locking_bytecode: Uint8Array | null): { result: libauth.TransactionGenerationAttempt<libauth.AuthenticationProgramStateBCH>, source_outputs: libauth.Output[], payouts_info: Array<{ output: Output, index: number }> } => {
+export const generateExchangeTx = (compiler: libauth.CompilerBCH, input_pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_outputs:  Output[], data_locking_bytecode: Uint8Array | null): { result: libauth.TransactionGenerationAttempt<libauth.AuthenticationProgramStateBCH>, source_outputs: libauth.Output[], payouts_info: Array<{ output: Output, index: number }> } => {
   const source_outputs: libauth.Output[] = [];
   const inputs: libauth.InputTemplate<libauth.CompilerBCH>[] = [];
   const outputs: libauth.OutputTemplate<libauth.CompilerBCH>[] = []

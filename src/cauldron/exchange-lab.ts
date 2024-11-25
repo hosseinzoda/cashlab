@@ -81,9 +81,11 @@ export default class ExchangeLab {
   _rate_denominator: bigint;
   _template: libauth.WalletTemplate;
   _compiler: libauth.CompilerBCH;
+  _default_preferred_token_output_bch_amount: bigint | null;
   constructor () {
     // default lab parameters
     this._rate_denominator = 10000000000000n;
+    this._default_preferred_token_output_bch_amount = null;
     // init libauth cauldron template compiler
     const template_result = libauth.importWalletTemplate(cauldron_libauth_template_data);
     if (typeof template_result == 'string') {
@@ -121,6 +123,15 @@ export default class ExchangeLab {
     } else {
       return 1n;
     }
+  }
+  getPreferredTokenOutputBCHAmount (output: Output): bigint | null {
+    if (output == null) {
+      throw new ValueError('output should not be null');
+    }
+    return this._default_preferred_token_output_bch_amount;
+  }
+  setDefaultPreferredTokenOutputBCHAmount (value: bigint | null) {
+    this._default_preferred_token_output_bch_amount = value;
   }
 
   reconstructTradePoolsByReducingSupply (pool_trade_list: PoolTrade[], reduce_supply: bigint): PoolTrade[] {

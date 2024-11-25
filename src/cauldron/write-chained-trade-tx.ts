@@ -1,8 +1,11 @@
-import type { Fraction, TokenId, PayoutRule, OutputWithFT, SpendableCoin } from '../common/types.js';
+import type { Fraction, TokenId, PayoutRule, Output, OutputWithFT, SpendableCoin } from '../common/types.js';
 import { NATIVE_BCH_TOKEN_ID, SpendableCoinType } from '../common/constants.js';
 import { bigIntArraySortPolyfill } from '../common/util.js';
-import { InvalidProgramState, ValueError } from '../common/exceptions.js';
-import { writeTradeTx } from './write-trade-tx.js';
+import { InvalidProgramState, ValueError, InsufficientFunds } from '../common/exceptions.js';
+import {
+  validateTradePoolListAndCalcAggregatePayouts, initCalcTxSizeCache, calcTxSize,
+  buildPayoutOutputs, generateExchangeTx
+} from './write-trade-tx.js';
 import * as libauth from '@bitauth/libauth';
 import type {
   BCHCauldronContext, PoolTrade, WriteChainedTradeTxController, TradeTxResult,
@@ -11,6 +14,10 @@ import type {
 import { calcTradeAvgRate, sizeOfPoolV0InAnExchangeTx } from './util.js';
 
 export const writeChainedTradeTx = async (context: BCHCauldronContext, compiler: libauth.CompilerBCH, pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_rules: PayoutRule[], data_locking_bytecode: Uint8Array | null, txfee_per_byte: number | bigint, controller?: WriteChainedTradeTxController): Promise<TradeTxResult[]> => {
+  const _txfee_per_byte = typeof txfee_per_byte == 'bigint' ? txfee_per_byte : BigInt(txfee_per_byte);
+  if (_txfee_per_byte < 0n) {
+    throw new ValueError('txfee should be greater than or equal to zero');
+  }
   const rate_denominator = context.getRateDenominator();
   const grouped_entries_with_rate: Array<{ supply_token_id: TokenId, demand_token_id: TokenId, list: Array<{ item: PoolTrade, rate: Fraction }> }> = [];
   for (const input_pool_trade of pool_trade_list) {
@@ -28,7 +35,38 @@ export const writeChainedTradeTx = async (context: BCHCauldronContext, compiler:
   let grouped_entries: Array<{ supply_token_id: TokenId, demand_token_id: TokenId, list: PoolTrade[] }> = grouped_entries_with_rate.map((a) => ({ supply_token_id: a.supply_token_id, demand_token_id: a.demand_token_id, list: a.list.map((b) => b.item) }));
   let available_input_coins: SpendableCoin[] = input_coins;
   while (grouped_entries.reduce((a, b) => a + b.list.length, 0) > 0) {
-    let result: GenerateChainedTradeTxResult = writeChainedExchangeTxSub(grouped_entries, available_input_coins, [...payout_rules], controller);
+    let result: GenerateChainedTradeTxResult = writeChainedExchangeTxSub(grouped_entries, available_input_coins, payout_rules, controller);
+    const calc_tx_size_cache = initCalcTxSizeCache();
+    const calcTxFeeWithOutputs = (outputs: Output[]): bigint => {
+      const tx_size = calcTxSize(result.pool_trade_list, result.input_coins, outputs, data_locking_bytecode, calc_tx_size_cache);
+      return BigInt(tx_size) * _txfee_per_byte;
+    };
+    let payout_outputs, txfee, token_burns;
+    { // build the payout outputs, apply payout rules
+      try {
+        const aggregate_payout_list = validateTradePoolListAndCalcAggregatePayouts(result.pool_trade_list, result.input_coins);
+        ({ payout_outputs, txfee, token_burns } = buildPayoutOutputs(context, result.payout_rules, aggregate_payout_list, calcTxFeeWithOutputs, true));
+      } catch (err) {
+        if (err instanceof InsufficientFunds) {
+          // add to input_coins when there's not enough sats is in them to pay the fees
+          const required_amount = err.required_amount as bigint;
+          const aggbal_list = [ { token_id: NATIVE_BCH_TOKEN_ID, balance: -1n * required_amount } ]
+          const sub_input_coins = available_input_coins.filter((a) => result.input_coins.indexOf(a) == -1 && a.output.token == null);
+          const selected_input_coins = inputCoinsToHavePositiveBalance(aggbal_list, sub_input_coins, controller);
+          const additional_sats = selected_input_coins.reduce((a: bigint, b: SpendableCoin): bigint => a + b.output.amount, 0n);
+          if (additional_sats < required_amount) {
+            throw err;
+          }
+          for (const selected_input_coin of selected_input_coins) {
+            result.input_coins.push(selected_input_coin);
+          }
+          const aggregate_payout_list = validateTradePoolListAndCalcAggregatePayouts(result.pool_trade_list, result.input_coins);
+          ({ payout_outputs, txfee, token_burns } = buildPayoutOutputs(context, result.payout_rules, aggregate_payout_list, calcTxFeeWithOutputs, true));
+        } else {
+          throw err;
+        }
+      }
+    }
     if (typeof controller?.generateMiddleware == 'function') {
       result = await controller.generateMiddleware(result, grouped_entries, available_input_coins)
     }
@@ -36,7 +74,26 @@ export const writeChainedTradeTx = async (context: BCHCauldronContext, compiler:
       break; // done
     }
     grouped_entries = result.remained_grouped_entries;
-    const trade_tx: TradeTxResult = writeTradeTx(context, compiler, result.pool_trade_list, result.input_coins, result.payout_rules, data_locking_bytecode, txfee_per_byte);
+    let trade_tx;
+    { // construct the transaction
+      const { result: generate_result, source_outputs, payouts_info } = generateExchangeTx(compiler, result.pool_trade_list, result.input_coins, payout_outputs.map((a) => a.output), data_locking_bytecode);
+      if (!generate_result.success) {
+        /* c8 ignore next */
+        throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(generate_result.errors, null, '  '));
+      }
+      trade_tx = {
+        txbin: libauth.encodeTransaction(generate_result.transaction),
+        txfee,
+        payouts_info: payouts_info.map((a) => ({
+          output: a.output,
+          index: a.index,
+          payout_rule: (payout_outputs.find((b) => b.output == a.output) as any).payout_rule as PayoutRule,
+        })),
+        token_burns,
+        libauth_source_outputs: source_outputs,
+        libauth_generated_transaction: generate_result.transaction,
+      };
+    }
     // extract spendable
     const trade_txhash = libauth.hashTransactionUiOrder(trade_tx.txbin);
     const payout_coins = trade_tx.payouts_info.map((a) => {
@@ -69,6 +126,77 @@ export const writeChainedTradeTx = async (context: BCHCauldronContext, compiler:
   return trade_tx_chain;
 }
 
+const getAggregateBalanceForToken = (aggregate_balance_list: Array<{ token_id: TokenId, balance: bigint }>, token_id: TokenId): { token_id: TokenId, balance: bigint } => {
+  const idx = aggregate_balance_list.findIndex((a) => a.token_id == token_id);
+  let output: { token_id: TokenId, balance: bigint };
+  if (idx == -1) {
+    output = { token_id, balance: 0n };
+    aggregate_balance_list.push(output);
+  } else {
+    output = aggregate_balance_list[idx] as any;
+  }
+  return output;
+};
+
+const inputCoinsToHavePositiveBalance = (aggregate_balance_list: Array<{ token_id: TokenId, balance: bigint }>, input_coins: SpendableCoin[], controller?: WriteChainedTradeTxController): SpendableCoin[] => {
+  aggregate_balance_list = structuredClone(aggregate_balance_list);
+  const aggbal_list = aggregate_balance_list.filter((a) => a.balance < 0n);
+  if (aggbal_list.length == 0) {
+    return [];
+  }
+  const native_bch_aggregate_balance = getAggregateBalanceForToken(aggregate_balance_list, NATIVE_BCH_TOKEN_ID);
+  let prevent_default = false;
+  const preventDefault = () => prevent_default = true;
+  let output: SpendableCoin[] = [];
+  if (typeof controller?.inputCoinsToHavePositiveBalance == 'function') {
+    output = controller.inputCoinsToHavePositiveBalance(structuredClone(aggbal_list), input_coins.slice(), { preventDefault });
+    for (const coin of output) {
+      if (input_coins.indexOf(coin) == -1) {
+        throw new ValueError(`inputCoinsToHavePositiveBalance's output should come from the input_coins that has been passed as its argument`);
+      }
+      native_bch_aggregate_balance.balance += coin.output.amount;
+      if (coin.output.token != null) {
+        getAggregateBalanceForToken(aggregate_balance_list, coin.output.token.token_id).balance += coin.output.token.amount;
+      }
+    }
+  } else {
+    output = []
+  }
+  if (prevent_default) {
+    if (aggregate_balance_list.filter((a) => a.balance < 0n).length > 0) {
+      throw new InsufficientFunds(`Not enough input coins (selected) to pay for the trade!`);
+    }
+    return output;
+  }
+  for (const aggbal of aggbal_list) {
+    let sub_input_coins = input_coins.filter((a) => output.indexOf(a) == -1);
+    if (aggbal.token_id == NATIVE_BCH_TOKEN_ID) {
+      sub_input_coins = [
+        // first-in-line coins without tokens
+        ...bigIntArraySortPolyfill(sub_input_coins.filter((a) => a.output.token == null), (a, b) => b.output.amount - a.output.amount),
+        // second-in-line coins with tokens
+        ...bigIntArraySortPolyfill(sub_input_coins.filter((a) => a.output.token != null), (a, b) => b.output.amount - a.output.amount),
+      ];
+    } else {
+      sub_input_coins = sub_input_coins.filter((a) => a.output?.token?.token_id == aggbal.token_id);
+      bigIntArraySortPolyfill(sub_input_coins, (a, b) => (b.output as OutputWithFT).token.amount - (a.output as OutputWithFT).token.amount);
+    }
+    for (const input_coin of sub_input_coins) {
+      if (aggbal.balance >= 0n) {
+        break // cleared
+      }
+      native_bch_aggregate_balance.balance += input_coin.output.amount;
+      if (input_coin.output.token != null) {
+        getAggregateBalanceForToken(aggregate_balance_list, input_coin.output.token.token_id).balance += input_coin.output.token.amount;
+      }
+      output.push(input_coin);
+    }
+  }
+  if (aggbal_list.filter((a) => a.balance < 0n).length > 0) {
+    throw new InsufficientFunds(`Not enough input coins to pay for the trade!`);
+  }
+  return output;
+};
 
 const writeChainedExchangeTxSub = (grouped_entries: Array<{ supply_token_id: TokenId, demand_token_id: TokenId, list: PoolTrade[] }>, input_coins: SpendableCoin[], payout_rules: PayoutRule[], controller?: WriteChainedTradeTxController): GenerateChainedTradeTxResult => {
   // copy input arguments
@@ -87,72 +215,14 @@ const writeChainedExchangeTxSub = (grouped_entries: Array<{ supply_token_id: Tok
     }
     entries.list.push(entry);
   };
-  const getAggregateBalanceForToken = (aggregate_balance_list: Array<{ token_id: TokenId, balance: bigint }>, token_id: TokenId): { token_id: TokenId, balance: bigint } => {
-    const idx = aggregate_balance_list.findIndex((a) => a.token_id == token_id);
-    let output: { token_id: TokenId, balance: bigint };
-    if (idx == -1) {
-      output = { token_id, balance: 0n };
-      aggregate_balance_list.push(output);
-    } else {
-      output = aggregate_balance_list[idx] as any;
-    }
-    return output;
-  };
-  const inputCoinsToHavePositiveBalance = (aggregate_balance_list: Array<{ token_id: TokenId, balance: bigint }>, input_coins: SpendableCoin[]): SpendableCoin[] => {
-    aggregate_balance_list = structuredClone(aggregate_balance_list);
-    const aggbal_list = aggregate_balance_list.filter((a) => a.balance < 0n);
-    if (aggbal_list.length == 0) {
-      return [];
-    }
-    const native_bch_aggregate_balance = getAggregateBalanceForToken(aggregate_balance_list, NATIVE_BCH_TOKEN_ID);
-    let prevent_default = false;
-    const preventDefault = () => prevent_default = true;
-    let output: SpendableCoin[] = [];
-    if (typeof controller?.inputCoinsToHavePositiveBalance == 'function') {
-      output = controller.inputCoinsToHavePositiveBalance(structuredClone(aggbal_list), input_coins.slice(), { preventDefault });
-      for (const coin of output) {
-        if (input_coins.indexOf(coin) == -1) {
-          throw new ValueError(`inputCoinsToHavePositiveBalance's output should come from the input_coins that has been passed as its argument`);
-        }
-        native_bch_aggregate_balance.balance += coin.output.amount;
-        if (coin.output.token != null) {
-          getAggregateBalanceForToken(aggregate_balance_list, coin.output.token.token_id).balance += coin.output.token.amount;
-        }
-      }
-    } else {
-      output = []
-    }
-    if (prevent_default) {
-      return output;
-    }
-    for (const aggbal of aggbal_list) {
-      const sub_input_coins = aggbal.token_id == NATIVE_BCH_TOKEN_ID ? input_coins :
-        input_coins.filter((a) => a.output?.token?.token_id == aggbal.token_id && output.indexOf(a) == -1);
-      if (aggbal.token_id == NATIVE_BCH_TOKEN_ID) {
-        bigIntArraySortPolyfill(sub_input_coins, (a, b) => b.output.amount - a.output.amount);
-      } else {
-        bigIntArraySortPolyfill(sub_input_coins, (a, b) => (b.output as OutputWithFT).token.amount - (a.output as OutputWithFT).token.amount);
-      }
-      for (const input_coin of sub_input_coins) {
-        if (aggbal.balance >= 0n) {
-          break // cleared
-        }
-        native_bch_aggregate_balance.balance += input_coin.output.amount;
-        if (input_coin.output.token != null) {
-          getAggregateBalanceForToken(aggregate_balance_list, input_coin.output.token.token_id).balance += input_coin.output.token.amount;
-        }
-        output.push(input_coin);
-      }
-    }
-    return output;
-  }
-  const poolsToClearAggregateBalance = (aggregate_balance_list: Array<{ token_id: TokenId, balance: bigint }>, input_coins: SpendableCoin[]): { pools_info: Array<{ entries: any[], item: PoolTrade, index: number }>, input_coins: SpendableCoin[] }  => {
+  const poolsAndInputCoinsToClearAggregateBalance = (mutable_aggregate_balance_list: Array<{ token_id: TokenId, balance: bigint }>, input_coins: SpendableCoin[]): { pools_info: Array<{ entries: any[], item: PoolTrade, index: number }>, input_coins: SpendableCoin[] }  => {
     const addToIncludedInputCoins = () => {
       const sub_input_coins = input_coins.filter((a) => included_input_coins.indexOf(a) == -1);
-      for (const input_coin of inputCoinsToHavePositiveBalance(aggregate_balance_list, sub_input_coins)) {
-        bch_aggbal.balance += input_coin.output.amount;
+      for (const input_coin of inputCoinsToHavePositiveBalance(mutable_aggregate_balance_list, sub_input_coins, controller)) {
+        // update aggregate_balance_list
+        getAggregateBalanceForToken(mutable_aggregate_balance_list, NATIVE_BCH_TOKEN_ID).balance += input_coin.output.amount;
         if (input_coin.output.token != null) {
-          getAggregateBalanceForToken(aggregate_balance_list, input_coin.output.token.token_id).balance += input_coin.output.token.amount;
+          getAggregateBalanceForToken(mutable_aggregate_balance_list, input_coin.output.token.token_id).balance += input_coin.output.token.amount;
         }
         included_input_coins.push(input_coin);
       }
@@ -160,20 +230,16 @@ const writeChainedExchangeTxSub = (grouped_entries: Array<{ supply_token_id: Tok
     let max_clear_attempts = 5;
     let pools_info: Array<{ entries: any[], item: PoolTrade, index: number }> = [];
     let included_input_coins: SpendableCoin[] = [];
-    const bch_aggbal = getAggregateBalanceForToken(aggregate_balance_list, NATIVE_BCH_TOKEN_ID);
     while (true) {
-      const aggbal_list = aggregate_balance_list.filter((a) => a.balance < 0n);
-      if (aggbal_list.length == 0) {
+      const aggbal = mutable_aggregate_balance_list.find((a) => a.balance < 0n);
+      if (aggbal == null) {
         break; // all clear
       }
       if (max_clear_attempts-- < 0) {
         throw new ValueError(`max clear balance attempts reached!`);
       }
-      for (const aggbal of aggbal_list) {
-        const counter_entries = grouped_entries.find((a) => a.demand_token_id == aggbal.token_id);
-        if (counter_entries == null) {
-          break;
-        }
+      const counter_entries = grouped_entries.find((a) => a.demand_token_id == aggbal.token_id);
+      if (counter_entries != null) {
         const counter_entries_enum = counter_entries.list.map((a, i) => [ i, a ]);
         while (true) {
           const next_counter_entry_enum = counter_entries_enum.find((a) => pools_info.find((b) => b.item == a[1]) == null);
@@ -182,18 +248,17 @@ const writeChainedExchangeTxSub = (grouped_entries: Array<{ supply_token_id: Tok
           }
           const counter_item: PoolTrade = next_counter_entry_enum[1] as PoolTrade;
           pools_info.push({ index: next_counter_entry_enum[0] as number, item: counter_item, entries: counter_entries.list });
-          getAggregateBalanceForToken(aggregate_balance_list, counter_item.supply_token_id).balance -= counter_item.supply;
-          aggbal.balance += counter_item.demand;
+          // update aggregate_balance_list
+          getAggregateBalanceForToken(mutable_aggregate_balance_list, counter_item.supply_token_id).balance -= counter_item.supply;
+          getAggregateBalanceForToken(mutable_aggregate_balance_list, counter_item.demand_token_id).balance += counter_item.demand;
           if (aggbal.balance >= 0n) {
             break;
           }
           addToIncludedInputCoins();
         }
-        if (aggbal.balance >= 0n) {
-          break;
-        }
+      } else {
+        addToIncludedInputCoins();
       }
-      addToIncludedInputCoins();
     }
     return { pools_info, input_coins: included_input_coins };
   };
@@ -214,7 +279,7 @@ const writeChainedExchangeTxSub = (grouped_entries: Array<{ supply_token_id: Tok
     getAggregateBalanceForToken(next_aggregate_balance_list, entry.supply_token_id).balance -= entry.supply;
     getAggregateBalanceForToken(next_aggregate_balance_list, entry.demand_token_id).balance += entry.demand;
     const sub_input_coins = input_coins.filter((a) => output.input_coins.indexOf(a) == -1);
-    const counter_balance_data = poolsToClearAggregateBalance(next_aggregate_balance_list, sub_input_coins);
+    const counter_balance_data = poolsAndInputCoinsToClearAggregateBalance(next_aggregate_balance_list, sub_input_coins);
     { // add to included_tokens_id
       for (const pool of [entry, ...counter_balance_data.pools_info.map((a) => a.item)]) {
         if (included_tokens_id.indexOf(pool.supply_token_id) == -1) {
@@ -236,7 +301,7 @@ const writeChainedExchangeTxSub = (grouped_entries: Array<{ supply_token_id: Tok
       sizeOfPoolV0InAnExchangeTx() * (1n + BigInt(counter_balance_data.pools_info.length)) + // pools
       aninput_coin_size * BigInt(counter_balance_data.input_coins.length); // input coins
     // expected payout count
-    const expected_payout_output_size = anoutput_size * BigInt(included_tokens_id.length)
+    const expected_payout_output_size = anoutput_size * BigInt(included_tokens_id.length);
     if (next_size + expected_payout_output_size > max_tx_size) {
       pushToEntryStack(entry);
       break; // reached the limit

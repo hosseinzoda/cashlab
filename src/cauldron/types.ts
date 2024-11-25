@@ -68,4 +68,5 @@ export type BCHCauldronContext = {
   getRateDenominator (): bigint;
   getOutputMinAmount (output: Output): bigint;
   getMinTokenReserve (token_id: TokenId): bigint;
+  getPreferredTokenOutputBCHAmount (output: Output): bigint | null;
 };

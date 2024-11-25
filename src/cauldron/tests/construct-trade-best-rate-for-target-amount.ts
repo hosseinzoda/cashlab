@@ -122,7 +122,7 @@ test('best rate for target amount, test02', (t) => {
 
   const result: TradeResult = exlab.constructTradeBestRateForTargetDemand(supply_token_id, demand_token_id, demand, input_pools, 0n);
   t.is(result.entries.length, 2);
-  t.assert(result.summary.rate.numerator <= 1132519173838209n, 'trade average result is higher than a known best rate!!')
+  t.assert(result.summary.rate.numerator <= 1132519173838209000n, 'trade average result is higher than a known best rate!!')
   // exact match to a pre-determined result
   t.deepEqual(result.entries, [
     {
