@@ -1,0 +1,100 @@
+{
+  "$schema": "https://ide.bitauth.com/authentication-template-v0.schema.json",
+  "description": "",
+  "name": "MoriaV0",
+  "entities": {
+    "main": {
+      "description": "",
+      "name": "main",
+      "scripts": [
+        "moria_mint", "moria", "loan_add_collateral", "loan_repay", "loan_sunset_redeem", "loan"
+      ],
+      "variables": {
+        "borrower_key": {
+          "description": "borrower's Key",
+          "name": "borrower_key",
+          "type": "Key"
+        },
+        "borrower_pkh": {
+          "description": "Hash of borrower's withdrawal public key hash",
+          "name": "borrower_pkh",
+          "type": "AddressData"
+        },
+        "sunset_datasig": {
+          "description": "The datasig for the moria' sunset event.",
+          "name": "sunset_datasig",
+          "type": "AddressData"
+        },
+        "sunset_pubkey": {
+          "description": "Loan construct argument, Sunset public key.",
+          "name": "sunset_pubkey",
+          "type": "WalletData"
+        },
+        "sunset_message": {
+          "description": "Loan construct argument, Sunset message.",
+          "name": "sunset_message",
+          "type": "WalletData"
+        },
+        "oracle_token": {
+          "description": "Moria construct argument, oracle token category",
+          "name":  "oracle_token",
+          "type": "WalletData"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "moria_update": {
+      "name": "Apply update on moria contract",
+      "script": "<0> // update abi index",
+      "unlocks": "moria"
+    },
+    "moria_mint": {
+      "name": "Mint a loan with moria",
+      "script": "<borrower_pkh> // arg0: borrowerPKH\n<1> // borrow abi index",
+      "unlocks": "moria"
+    },
+    "moria": {
+      "lockingType": "p2sh32",
+      "name": "Moria locking script",
+      "script": "<OP_HASH256 <$(<loan> OP_HASH256)> OP_EQUAL> <$(<0x01 oracle_token> OP_REVERSEBYTES)> moria_redeem_script"
+    },
+    "moria_redeem_script": {
+      "name": "moria_redeem_script",
+      "script": "0x5279009c63c076009d51ce7b8851cf011c7f77547f758100cf816ea269785379cd5479c7885379d15479ce885379d2885279d35379d0a2695279cc02e8039da078d35279d0016493a29b69c452a06352d1008868c453a06376ce01207f7553d1008753d15279879b6953d200887568c454a1777777677b519dc076009d51ce7b88768bcf76011c7f77547f75815279cf8178a1697c01207f77817600a06952cc529553967c950400e1f5059652795393d3767ba169760164a2697603a08601a1695279cd5379c7885279d15379ce885279d27b8878d35279d05279949d78cc02e8039d7cce01207f7552d178885379827701149d52d2547a537a7e8852d3009d52cd7b8853cc02e8039d53d18853d2008854d10088c455a06355d1008868c456a168",
+    },
+    "loan_add_collateral": {
+      "name": "Add collateral to a loan",
+      "script": "<borrower_key.schnorr_signature.all_outputs> // arg1: signature\n<borrower_key.public_key> // arg0: borrowerPubKey\n<0> // add collateral abi index",
+      "unlocks": "loan"
+    },
+    "loan_repay": {
+      "name": "Repay a loan, Unlocks loan utxo",
+      "script": "<borrower_key.schnorr_signature.all_outputs> // arg1: signature\n<borrower_key.public_key> // arg0: borrowerPubKey\n<1> // repay loan abi index",
+      "unlocks": "loan"
+    },
+    "loan_liquidate": {
+      "name": "Liquidate a loan, Unlocks loan utxo when collateral is below its requirement",
+      "script": "<0x00> // arg1: dummy argument\n<0x00> // arg0: dummy argument\n<1> // repay loan abi index",
+      "unlocks": "loan"
+    },
+    "loan_sunset_redeem": {
+      "name": "Redeem tokens for bch in the event of moria-v0's sunset",
+      "script": "<sunset_datasig> // arg0: sunset datasig\n<2> // sunset redeem abi index",
+      "unlocks": "loan"
+    },
+    "loan": {
+      "lockingType": "p2sh32",
+      "name": "Loan locking script",
+      "script": "<sunset_message> <sunset_pubkey> loan_redeem_script"
+    },
+    "loan_redeem_script": {
+      "name": "loan_redeem_script",
+      "script": "0x5279009c63c076cf01147f755579a98871ad76cc78c603a0860193a26976cd78c78876d178ce8876d278cf8876d37cd09c777777675279519c630051c076529d525379ce5279ce527e8878cf01147f81547acf01207f77817600a069547ac65a955b967c950400e1f5059678a2635779a952798858795879ad685379d3547ad07b939dc452a06378d1008868c453a06352ce53d1788853d200887568c454a1696d6d6d7551677b529d5279827701409d78827751a269bb0051c076529d52535479ce5379ce527e885279cf01147f81557acf01207f77817600a0695579c652790400e1f505957b96940376a914537a7e0288ac7e5479cd885379cca1697bd1008800d3547ad07b939dc453a06378ce53d100875279d15279879b6953d200887568c454a177776868"
+    }
+  },
+  "supported": [
+    "BCH_2023_05"
+  ],
+  "version": 0
+}

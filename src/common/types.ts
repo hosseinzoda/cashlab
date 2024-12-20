@@ -33,16 +33,33 @@ export type OutputWithFT = Output & {
   };
 };
 
+export type OutputWithNFT = Output & {
+  token: {
+    amount: bigint;
+    token_id: string;
+    nft: {
+      capability: `${NonFungibleTokenCapability}`;
+      commitment: Uint8Array;
+    };
+  };
+};
+
 export enum SpendableCoinType {
   P2PKH = 'P2PKH',
 };
 
 export type Outpoint = { txhash: Uint8Array, index: number };
 
-export type SpendableCoinP2PKH<OutputType> = {
-  type: SpendableCoinType.P2PKH;
+export type UTXO<OutputType = Output> = {
   output: OutputType;
   outpoint: Outpoint;
+};
+
+export type UTXOWithNFT = UTXO<OutputWithNFT>;
+export type UTXOWithFT = UTXO<OutputWithFT>;
+
+export type SpendableCoinP2PKH<OutputType> = UTXO<OutputType> & {
+  type: SpendableCoinType.P2PKH;
   key: Uint8Array;
 };
 

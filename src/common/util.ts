@@ -1,6 +1,8 @@
-import type { Fraction, TokenId } from './types.js';
+import type { Fraction, TokenId, Output } from './types.js';
 import { NATIVE_BCH_TOKEN_ID } from './constants.js';
 import { ValueError } from './exceptions.js';
+import * as libauth from '@bitauth/libauth';
+const { binToHex } = libauth;
 
 export const ceilingValueOfBigIntDivision = (numerator: bigint, denominator: bigint) => {
   const v0 = numerator / denominator;
@@ -106,3 +108,91 @@ export const bigIntArraySortPolyfill = <T>(array: T[], callable: (a: T, b: T) =>
     }
   });
 }
+
+export const walletTemplateP2pkhNonHd: libauth.WalletTemplate = {
+  $schema: 'https://libauth.org/schemas/wallet-template-v0.schema.json',
+  description:
+    'A standard single-factor wallet template that uses Pay-to-Public-Key-Hash (P2PKH), the most common authentication scheme in use on the network.\n\nThis P2PKH template uses BCH Schnorr signatures, reducing the size of transactions.',
+  entities: {
+    owner: {
+      description: 'The individual who can spend from this wallet.',
+      name: 'Owner',
+      scripts: ['lock', 'unlock'],
+      variables: {
+        key: {
+          description: 'The private key that controls this wallet.',
+          name: 'Key',
+          type: 'Key',
+        },
+      },
+    },
+  },
+  name: 'Single Signature (P2PKH)',
+  scripts: {
+    lock: {
+      lockingType: 'standard',
+      name: 'P2PKH Lock',
+      script:
+        'OP_DUP\nOP_HASH160 <$(<key.public_key> OP_HASH160\n)> OP_EQUALVERIFY\nOP_CHECKSIG',
+    },
+    unlock: {
+      name: 'Unlock',
+      script: '<key.schnorr_signature.all_outputs>\n<key.public_key>',
+      unlocks: 'lock',
+    },
+  },
+  supported: ['BCH_2020_05', 'BCH_2021_05', 'BCH_2022_05'],
+  version: 0,
+};
+
+export const publicKeyHashToP2pkhLockingBytecode = (pkh: Uint8Array) => {
+  const compiler = libauth.walletTemplateToCompilerBCH({
+    $schema: 'https://libauth.org/schemas/wallet-template-v0.schema.json',
+    entities: { owner: { scripts: ['lock'], variables: { pkh: { name: 'pkh', type: 'AddressData' } } } },
+    scripts: {
+      lock: {
+        lockingType: 'standard',
+        name: 'P2PKH Lock',
+        script:
+        'OP_DUP\nOP_HASH160 <pkh> OP_EQUALVERIFY\nOP_CHECKSIG',
+      },
+    },
+    supported: ['BCH_2023_05'],
+    version: 0,
+  });
+  const locking_bytecode = compiler.generateBytecode({ data: { bytecode: { pkh } }, scriptId: 'lock' });
+  if (!locking_bytecode.success) {
+    throw new ValueError(libauth.formatError(libauth.P2pkhUtilityError.publicKeyToP2pkhLockingBytecodeCompilation, libauth.stringifyErrors(locking_bytecode.errors)));
+  }
+  return locking_bytecode.bytecode;
+};
+
+export const outputFromLibauthOutput = (la_output: libauth.Output): Output => {
+  return {
+    locking_bytecode: la_output.lockingBytecode,
+    amount: la_output.valueSatoshis,
+    token: la_output.token != null ? {
+      amount: la_output.token.amount,
+      token_id: binToHex(la_output.token.category),
+      nft: la_output.token.nft != null ? {
+        capability: la_output.token.nft.capability,
+        commitment: la_output.token.nft.commitment,
+      } : undefined,
+    } : undefined,
+  };
+};
+
+export const outputToLibauthOutput = (output: Output): libauth.Output => {
+  return {
+    lockingBytecode: output.locking_bytecode,
+    valueSatoshis: output.amount,
+    token: output.token != null ? {
+      amount: output.token.amount,
+      category: convertTokenIdToUint8Array(output.token.token_id),
+      nft: output.token.nft != null ? {
+        capability: output.token.nft.capability,
+        commitment: output.token.nft.commitment,
+      } : undefined,
+    } : undefined,
+  };
+};

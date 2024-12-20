@@ -1,0 +1,76 @@
+{
+  "$schema": "https://ide.bitauth.com/authentication-template-v0.schema.json",
+  "description": "",
+  "name": "MoriaV0",
+  "entities": {
+    "main": {
+      "description": "",
+      "name": "main",
+      "scripts": [
+        "oracle_update", "oracle_withdraw_bch"
+      ],
+      "variables": {
+        "owner_key":  {
+          "description": "owner's Key",
+          "name": "owner_key",
+          "type": "Key"
+        },
+        "oracle_pubkey":  {
+          "description": "oracle public key",
+          "name": "oracle_pubkey",
+          "type": "AddressData"
+        },
+        "oracle_datasig":  {
+          "description": "oracle datasig",
+          "name": "oracle_datasig",
+          "type": "AddressData"
+        },
+        "oracle_message": {
+          "description": "",
+          "name": "oracle_message",
+          "type": "AddressData"
+        },
+        "owner_pubkey": {
+          "description": "Public key of the owner.",
+          "name":  "owner_pubkey",
+          "type": "WalletData"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "oracle_update": {
+      "name": "Update oracle message",
+      "script": "<oracle_message> // arg2: oracleMessage\n<oracle_datasig> // arg1: oracleSig\n<oracle_pubkey> // arg0: oraclePubKey\n<0> // update, abi index",
+      "unlocks": "oracle"
+    },
+    "oracle_use": {
+      "name": "Use oracle message",
+      "script": "<1> // use, abi index",
+      "unlocks": "oracle"
+    },
+    "oracle_withdraw_bch": {
+      "name": "Withdraw collected fees from the contract.",
+      "script": "<owner_key.schnorr_signature.all_outputs> // arg0: signature\n<2> // withdraw bch, abi index",
+      "unlocks": "oracle"
+    },
+    "oracle_swap": {
+      "name": "Swap the oracle",
+      "script": "<owner_key.schnorr_signature.all_outputs> // arg0: signature\n<3> // swap oracle, abi index",
+      "unlocks": "oracle"
+    },
+    "oracle": {
+      "lockingType": "p2sh32",
+      "name": "Oracle locking script",
+      "script": "<owner_pubkey> oracle_redeem_script"
+    },
+    "oracle_redeem_script": {
+      "name": "oracle_redeem_script",
+      "script": "0x78009c635279827701219d54798277609dc0cf827701249dc0cf01147f785579a988557a5679567abb5479587f77547f75817c587f77547f7581a069c0ccc0c6a269c0cdc0c788c0d1c0ce88537a7ec0d28777776778519c6302e803c0ccc0c67b93a269c0cdc0c788c0d1c0ce88c0d2c0cf8777776778529c637b7cadc0cc022003a269c0cdc0c788c0d1c0ce88c0d2c0cf8777677c539dadc0cc022003a269c0cdc0c788c0d1c0ce88c0d2827701249dc0cf01147f75c0d201147f7b7b879169100000000000000000000000000000000087686868"
+    }
+  },
+  "supported": [
+    "BCH_2023_05"
+  ],
+  "version": 0
+}

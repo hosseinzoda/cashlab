@@ -66,7 +66,7 @@ const verifyPayoutsOfTradeTxResultBasedOnTradePools = (t: any, result: TradeTxRe
   }
 };
 
-test('write a trade tx, test01', (t) => {
+test('create a trade tx, test01', (t) => {
 
   const exlab = new ExchangeLab();
 
@@ -147,7 +147,7 @@ test('write a trade tx, test01', (t) => {
 
   const txfee_per_byte: bigint = 1n;
 
-  const result: TradeTxResult = exlab.writeTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
+  const result: TradeTxResult = exlab.createTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
 
   exlab.verifyTradeTx(result);
 
@@ -160,7 +160,7 @@ test('write a trade tx, test01', (t) => {
   ]);
 });
 
-test.only('write a trade tx, test02', (t) => {
+test.only('create a trade tx, test02', (t) => {
 
   const exlab = new ExchangeLab();
 
@@ -252,7 +252,7 @@ test.only('write a trade tx, test02', (t) => {
 
   const txfee_per_byte: bigint = 1n;
 
-  const result: TradeTxResult = exlab.writeTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
+  const result: TradeTxResult = exlab.createTradeTx(input_pool_trade_list, input_coins, payout_rules, null, txfee_per_byte);
 
   exlab.verifyTradeTx(result);
 

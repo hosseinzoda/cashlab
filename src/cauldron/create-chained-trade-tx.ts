@@ -2,18 +2,18 @@ import type { Fraction, TokenId, PayoutRule, Output, OutputWithFT, SpendableCoin
 import { NATIVE_BCH_TOKEN_ID, SpendableCoinType } from '../common/constants.js';
 import { bigIntArraySortPolyfill } from '../common/util.js';
 import { InvalidProgramState, ValueError, InsufficientFunds } from '../common/exceptions.js';
+import * as payoutBuilder from '../common/payout-builder.js';
 import {
-  validateTradePoolListAndCalcAggregatePayouts, initCalcTxSizeCache, calcTxSize,
-  buildPayoutOutputs, generateExchangeTx
-} from './write-trade-tx.js';
+  validateTradePoolListAndCalcAggregatePayouts, initCalcTxSizeCache, calcTxSize, generateExchangeTx
+} from './create-trade-tx.js';
 import * as libauth from '@bitauth/libauth';
 import type {
-  BCHCauldronContext, PoolTrade, WriteChainedTradeTxController, TradeTxResult,
+  BCHCauldronContext, PoolTrade, CreateChainedTradeTxController, TradeTxResult,
   GenerateChainedTradeTxResult,
 } from './types.js';
 import { calcTradeAvgRate, sizeOfPoolV0InAnExchangeTx } from './util.js';
 
-export const writeChainedTradeTx = async (context: BCHCauldronContext, compiler: libauth.CompilerBCH, pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_rules: PayoutRule[], data_locking_bytecode: Uint8Array | null, txfee_per_byte: number | bigint, controller?: WriteChainedTradeTxController): Promise<TradeTxResult[]> => {
+export const createChainedTradeTx = async (context: BCHCauldronContext, compiler: libauth.CompilerBCH, pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_rules: PayoutRule[], data_locking_bytecode: Uint8Array | null, txfee_per_byte: number | bigint, controller?: CreateChainedTradeTxController): Promise<TradeTxResult[]> => {
   const _txfee_per_byte = typeof txfee_per_byte == 'bigint' ? txfee_per_byte : BigInt(txfee_per_byte);
   if (_txfee_per_byte < 0n) {
     throw new ValueError('txfee should be greater than or equal to zero');
@@ -35,17 +35,28 @@ export const writeChainedTradeTx = async (context: BCHCauldronContext, compiler:
   let grouped_entries: Array<{ supply_token_id: TokenId, demand_token_id: TokenId, list: PoolTrade[] }> = grouped_entries_with_rate.map((a) => ({ supply_token_id: a.supply_token_id, demand_token_id: a.demand_token_id, list: a.list.map((b) => b.item) }));
   let available_input_coins: SpendableCoin[] = input_coins;
   while (grouped_entries.reduce((a, b) => a + b.list.length, 0) > 0) {
-    let result: GenerateChainedTradeTxResult = writeChainedExchangeTxSub(grouped_entries, available_input_coins, payout_rules, controller);
+    let result: GenerateChainedTradeTxResult = createChainedExchangeTxSub(grouped_entries, available_input_coins, payout_rules, controller);
     const calc_tx_size_cache = initCalcTxSizeCache();
-    const calcTxFeeWithOutputs = (outputs: Output[]): bigint => {
-      const tx_size = calcTxSize(result.pool_trade_list, result.input_coins, outputs, data_locking_bytecode, calc_tx_size_cache);
-      return BigInt(tx_size) * _txfee_per_byte;
+    const buildPayoutOutputs = (available_payouts: Array<{ token_id: TokenId, amount: bigint }>, payout_rules: PayoutRule[]): payoutBuilder.PayoutBuildResult => {
+      const payout_context = {
+        getOutputMinAmount (output: Output): bigint {
+          return context.getOutputMinAmount(output);
+        },
+        getPreferredTokenOutputBCHAmount (output: Output): bigint | null {
+          return context.getPreferredTokenOutputBCHAmount(output);
+        },
+        calcTxFeeWithOutputs (outputs: Output[]): bigint {
+          const tx_size = calcTxSize(result.pool_trade_list, result.input_coins, outputs, data_locking_bytecode, calc_tx_size_cache);
+          return BigInt(tx_size) * _txfee_per_byte;
+        },
+      };
+      return payoutBuilder.build(payout_context, available_payouts, payout_rules, true);
     };
     let payout_outputs, txfee, token_burns;
     { // build the payout outputs, apply payout rules
       try {
         const aggregate_payout_list = validateTradePoolListAndCalcAggregatePayouts(result.pool_trade_list, result.input_coins);
-        ({ payout_outputs, txfee, token_burns } = buildPayoutOutputs(context, result.payout_rules, aggregate_payout_list, calcTxFeeWithOutputs, true));
+        ({ payout_outputs, txfee, token_burns } = buildPayoutOutputs(aggregate_payout_list, result.payout_rules));
       } catch (err) {
         if (err instanceof InsufficientFunds) {
           // add to input_coins when there's not enough sats is in them to pay the fees
@@ -61,7 +72,7 @@ export const writeChainedTradeTx = async (context: BCHCauldronContext, compiler:
             result.input_coins.push(selected_input_coin);
           }
           const aggregate_payout_list = validateTradePoolListAndCalcAggregatePayouts(result.pool_trade_list, result.input_coins);
-          ({ payout_outputs, txfee, token_burns } = buildPayoutOutputs(context, result.payout_rules, aggregate_payout_list, calcTxFeeWithOutputs, true));
+          ({ payout_outputs, txfee, token_burns } = buildPayoutOutputs(aggregate_payout_list, result.payout_rules));
         } else {
           throw err;
         }
@@ -138,7 +149,7 @@ const getAggregateBalanceForToken = (aggregate_balance_list: Array<{ token_id: T
   return output;
 };
 
-const inputCoinsToHavePositiveBalance = (aggregate_balance_list: Array<{ token_id: TokenId, balance: bigint }>, input_coins: SpendableCoin[], controller?: WriteChainedTradeTxController): SpendableCoin[] => {
+const inputCoinsToHavePositiveBalance = (aggregate_balance_list: Array<{ token_id: TokenId, balance: bigint }>, input_coins: SpendableCoin[], controller?: CreateChainedTradeTxController): SpendableCoin[] => {
   aggregate_balance_list = structuredClone(aggregate_balance_list);
   const aggbal_list = aggregate_balance_list.filter((a) => a.balance < 0n);
   if (aggbal_list.length == 0) {
@@ -198,7 +209,7 @@ const inputCoinsToHavePositiveBalance = (aggregate_balance_list: Array<{ token_i
   return output;
 };
 
-const writeChainedExchangeTxSub = (grouped_entries: Array<{ supply_token_id: TokenId, demand_token_id: TokenId, list: PoolTrade[] }>, input_coins: SpendableCoin[], payout_rules: PayoutRule[], controller?: WriteChainedTradeTxController): GenerateChainedTradeTxResult => {
+const createChainedExchangeTxSub = (grouped_entries: Array<{ supply_token_id: TokenId, demand_token_id: TokenId, list: PoolTrade[] }>, input_coins: SpendableCoin[], payout_rules: PayoutRule[], controller?: CreateChainedTradeTxController): GenerateChainedTradeTxResult => {
   // copy input arguments
   grouped_entries = grouped_entries.map((a) => Object.assign({}, a, { list: a.list.slice() }));
   const popFromEntryStack = () => {

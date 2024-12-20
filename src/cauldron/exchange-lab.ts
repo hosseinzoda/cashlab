@@ -8,13 +8,13 @@ import {
 } from '../common/util.js';
 import type {
   PoolV0, PoolV0Parameters, PoolTrade, TradeResult, TradeTxResult, TradeSummary, AbstractTrade,
-  WriteChainedTradeTxController,
+  CreateChainedTradeTxController,
 } from './types.js';
 import { ExceptionRegistry, Exception, InvalidProgramState, ValueError, NotFoundError, InsufficientFunds } from '../common/exceptions.js';
 import cauldron_libauth_template_data from './cauldron-libauth-template.json' assert { type: "json" };
 import * as libauth from '@bitauth/libauth';
-import { writeTradeTx } from './write-trade-tx.js';
-import { writeChainedTradeTx } from './write-chained-trade-tx.js';
+import { createTradeTx } from './create-trade-tx.js';
+import { createChainedTradeTx } from './create-chained-trade-tx.js';
 import {
   PoolPair, calcPairRate, calcTradeSummary, sizeOfPoolV0InAnExchangeTx,
   calcTradeWithTargetSupplyFromAPair,
@@ -467,14 +467,14 @@ export default class ExchangeLab {
     input_coins should have enough tokens to fund sum of supply + trade_fee.
     payout_rules define the payout outputs for the demand side + change.
    */
-  writeTradeTx (input_pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_rules: PayoutRule[], data_locking_bytecode: Uint8Array | null, txfee_per_byte: number | bigint): TradeTxResult {
-    return writeTradeTx(this, this._compiler, input_pool_trade_list, input_coins, payout_rules, data_locking_bytecode, txfee_per_byte);
+  createTradeTx (input_pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_rules: PayoutRule[], data_locking_bytecode: Uint8Array | null, txfee_per_byte: number | bigint): TradeTxResult {
+    return createTradeTx(this, this._compiler, input_pool_trade_list, input_coins, payout_rules, data_locking_bytecode, txfee_per_byte);
   }
-  async writeChainedTradeTx (input_pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_rules: PayoutRule[], data_locking_bytecode: Uint8Array | null, txfee_per_byte: number | bigint, controller?: WriteChainedTradeTxController): Promise<TradeTxResult[]> {
-    return writeChainedTradeTx(this, this._compiler, input_pool_trade_list, input_coins, payout_rules, data_locking_bytecode, txfee_per_byte, controller);
+  async createChainedTradeTx (input_pool_trade_list: PoolTrade[], input_coins: SpendableCoin[], payout_rules: PayoutRule[], data_locking_bytecode: Uint8Array | null, txfee_per_byte: number | bigint, controller?: CreateChainedTradeTxController): Promise<TradeTxResult[]> {
+    return createChainedTradeTx(this, this._compiler, input_pool_trade_list, input_coins, payout_rules, data_locking_bytecode, txfee_per_byte, controller);
   }
   /*
-    Verify the validity of writeTradeTx result, Expecting it should always get verified.
+    Verify the validity of createTradeTx result, Expecting it should always get verified.
    */
   verifyTradeTx (trade_tx_result: TradeTxResult): void {
     const vm = libauth.createVirtualMachineBCH();

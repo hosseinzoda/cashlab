@@ -1,7 +1,7 @@
 {
   "name": "cashlab",
-  "version": "0.0.17",
-  "description": "A module to write, inspect & validate bch contracts/transactions.",
+  "version": "0.1.0",
+  "description": "A module to create, inspect & validate bch contracts/transactions.",
   "type": "module",
   "main": "./build/index.js",
   "types": "./build/index.d.ts",

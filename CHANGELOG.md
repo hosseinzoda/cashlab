@@ -2,6 +2,17 @@
 
 All notable changes of this module is documented in this file, Documenting changelog has start from version `0.0.9`.
 
+## [0.1.0] - 2024-12-20
+
+### ADDED
+
+- MoriaV0, tools for interacting with the moria protocol.
+
+### CHANGED
+
+- Move payout-builder.ts from cauldron's building transaction code to common.
+- Rename write-trade-tx & write-chained-trade-tx to create-trade-tx & create-chained-trade-tx.
+
 ## [0.0.17] - 2024-11-21
 
 ### ADDED

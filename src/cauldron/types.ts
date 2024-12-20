@@ -58,7 +58,7 @@ export type GenerateChainedTradeTxResult = {
   payout_rules: PayoutRule[];
 };
 
-export type WriteChainedTradeTxController = {
+export type CreateChainedTradeTxController = {
   inputCoinsToHavePositiveBalance?: (aggregate_balance_list: Array<{ token_id: TokenId, balance: bigint }>, input_coins: SpendableCoin[], options: { preventDefault: () => void } ) => SpendableCoin[];
   generateMiddleware?: (result: GenerateChainedTradeTxResult, grouped_entries: Array<{ supply_token_id: TokenId, demand_token_id: TokenId, list: PoolTrade[] }>, input_coins: SpendableCoin[]) => Promise<GenerateChainedTradeTxResult>;
   didGenerateTx?: (trade_tx: TradeTxResult, payout_coins: SpendableCoin[]) => void;
