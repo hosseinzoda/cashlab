@@ -115,6 +115,7 @@ for (let [ name, exception ] of [
   [ 'NotImplemented', NotImplemented ],
   [ 'InsufficientFunds', InsufficientFunds ],
   [ 'InvalidProgramState', InvalidProgramState ],
+  [ 'BurnTokenException', BurnTokenException ],
 ]) {
   ExceptionRegistry.add(name as string, exception as IBaseExceptionConstructor)
 }

@@ -17,77 +17,97 @@ const { hexToBin, binToBigIntUintLE, binToNumberUint32LE } = libauth;
 import moriav0_template_data from './moria-v0-template.json' assert { type: "json" };
 import d3lphi_oracle_template_data from './d3lphi-oracle-template.json' assert { type: "json" };
 
-export * from './types.js';
+export type MoriaV0Constants = {
+  musd_token_id: TokenId;
+  oracle_token_id: TokenId;
+  sunset_pubkey: Uint8Array;
+  sunset_message: Uint8Array;
+};
+
+const makeWalletDataOperation = (getPredefinedData: () => any) => {
+  return libauth.compilerOperationRequires({
+    canBeSkipped: false,
+    configurationProperties: [],
+    dataProperties: [],
+    operation: (identifier, data) => {
+      const predefined_data = getPredefinedData();
+      let bytecode = (predefined_data ? predefined_data[identifier] : null);
+      if (bytecode == null) {
+        if (!data.bytecode) {
+          return {
+            error: `Cannot resolve "${identifier}" - the "bytecode" property was not provided in the compilation data.`,
+            status: 'error',
+          };
+        }
+        bytecode = data.bytecode[identifier];
+      }
+      if (bytecode !== undefined) {
+        return { bytecode, status: 'success' };
+      }
+      return {
+        error: `Identifier "${identifier}" refers to a WalletData, but "${identifier}" was not provided in the CompilationData "bytecode".`,
+        recoverable: true,
+        status: 'error',
+      };
+    },
+  });
+};
+
 
 export default class MoriaV0 {
   _default_preferred_token_output_bch_amount: bigint | null;
   _context: CompilerContext;
   _template_predefined_data: { [template_name: string]: any };
+  static getConstants (): MoriaV0Constants {
+    return {
+      musd_token_id: '4046913cba6b70b2214a048a3df92252849f481ffa1455ed7faf17243c36bf67',
+      oracle_token_id: 'b0b6fc3d5cda81f4bb3fe464767dcc33e80b6356e4838f4dda40a1871a625950',
+      sunset_pubkey: hexToBin('0245723536e975f7f36fe157beca72acb939738698e5374d2c2f42e222273537bf'), // encoded sunset public key
+      sunset_message: hexToBin('73756e736574ab166bdd990ee54e4cecd3a346a9891e26c650b2'), // sunset message
+    };
+  }
+  static moriaLibauthCompiler (getPredefinedData: () => { sunset_pubkey: Uint8Array, sunset_message: Uint8Array, oracle_token: Uint8Array }): libauth.CompilerBCH {
+    const moriav0_template = libauth.importWalletTemplate(moriav0_template_data);
+    if (typeof moriav0_template  == 'string') {
+      /* c8 ignore next */
+      throw new InvalidProgramState(`Failed import libauth template (moriav0), error: ${moriav0_template}`);
+    };
+    return libauth.createCompilerBCH({
+      ...libauth.walletTemplateToCompilerConfiguration(moriav0_template),
+      operations: {
+        ...libauth.compilerOperationsBCH,
+        walletData: makeWalletDataOperation(getPredefinedData),
+      },
+    } as libauth.CompilerConfiguration<libauth.CompilationContextBCH>);
+  }
+  static oracleLibauthCompiler (getPredefinedData: () => { owner_pubkey: Uint8Array }): libauth.CompilerBCH {
+    const d3lphi_oracle_template = libauth.importWalletTemplate(d3lphi_oracle_template_data);
+    if (typeof d3lphi_oracle_template  == 'string') {
+      /* c8 ignore next */
+      throw new InvalidProgramState(`Failed import libauth template (d3lphi_oracle), error: ${d3lphi_oracle_template}`);
+    }
+    return libauth.createCompilerBCH({
+      ...libauth.walletTemplateToCompilerConfiguration(d3lphi_oracle_template),
+      operations: {
+        ...libauth.compilerOperationsBCH,
+        walletData: makeWalletDataOperation(getPredefinedData),
+      },
+    } as libauth.CompilerConfiguration<libauth.CompilationContextBCH>);
+  }
   constructor ({ oracle_owner_pubkey, txfee_per_byte }: { oracle_owner_pubkey: Uint8Array, txfee_per_byte: bigint }) {
-    const musd_token_id = '4046913cba6b70b2214a048a3df92252849f481ffa1455ed7faf17243c36bf67';
-    const oracle_token_id = 'b0b6fc3d5cda81f4bb3fe464767dcc33e80b6356e4838f4dda40a1871a625950';
+    const ctr = this.constructor as typeof MoriaV0;
+    const { musd_token_id, oracle_token_id, sunset_pubkey, sunset_message } = ctr.getConstants();
     this._template_predefined_data = {
       moria: {
-        sunset_pubkey: hexToBin('0245723536e975f7f36fe157beca72acb939738698e5374d2c2f42e222273537bf'), // encoded sunset public key
-        sunset_message: hexToBin('73756e736574ab166bdd990ee54e4cecd3a346a9891e26c650b2'), // sunset message
+        sunset_pubkey, sunset_message,
         oracle_token: hexToBin(oracle_token_id),
       },
       oracle: {
         owner_pubkey: oracle_owner_pubkey,
       },
     };
-    // @ts-ignore
-    const makeWalletDataOperation = (template_name: string) => {
-      return libauth.compilerOperationRequires({
-        canBeSkipped: false,
-        configurationProperties: [],
-        dataProperties: [],
-        operation: (identifier, data) => {
-          let bytecode = (this._template_predefined_data[template_name] ? this._template_predefined_data[template_name][identifier] : null);
-          if (bytecode == null) {
-            if (!data.bytecode) {
-              return {
-                error: `Cannot resolve "${identifier}" - the "bytecode" property was not provided in the compilation data.`,
-                status: 'error',
-              };
-            }
-            bytecode = data.bytecode[identifier];
-          }
-          if (bytecode !== undefined) {
-            return { bytecode, status: 'success' };
-          }
-          return {
-            error: `Identifier "${identifier}" refers to a WalletData, but "${identifier}" was not provided in the CompilationData "bytecode".`,
-            recoverable: true,
-            status: 'error',
-          };
-        },
-      });
-    };
-    const moriav0_template = libauth.importWalletTemplate(moriav0_template_data);
-    if (typeof moriav0_template  == 'string') {
-      /* c8 ignore next */
-      throw new InvalidProgramState(`Failed import libauth template (moriav0), error: ${moriav0_template}`);
-    };
-    const d3lphi_oracle_template = libauth.importWalletTemplate(d3lphi_oracle_template_data);
-    if (typeof d3lphi_oracle_template  == 'string') {
-      /* c8 ignore next */
-      throw new InvalidProgramState(`Failed import libauth template (d3lphi_oracle), error: ${d3lphi_oracle_template}`);
-    }
-    const moria_compiler = libauth.createCompilerBCH({
-      ...libauth.walletTemplateToCompilerConfiguration(moriav0_template),
-      operations: {
-        ...libauth.compilerOperationsBCH,
-        walletData: makeWalletDataOperation('moria'),
-      },
-    } as libauth.CompilerConfiguration<libauth.CompilationContextBCH>);
-    const oracle_compiler = libauth.createCompilerBCH({
-      ...libauth.walletTemplateToCompilerConfiguration(d3lphi_oracle_template),
-      operations: {
-        ...libauth.compilerOperationsBCH,
-        walletData: makeWalletDataOperation('oracle'),
-      },
-    } as libauth.CompilerConfiguration<libauth.CompilationContextBCH>);
+    const moria_compiler = ctr.moriaLibauthCompiler(() => this._template_predefined_data['moria']);
+    const oracle_compiler = ctr.oracleLibauthCompiler(() => this._template_predefined_data['oracle']);
     this._context = {
       getOutputMinAmount: this.getOutputMinAmount.bind(this),
       getPreferredTokenOutputBCHAmount: this.getPreferredTokenOutputBCHAmount.bind(this),
@@ -100,6 +120,10 @@ export default class MoriaV0 {
       min_mint_musd_amount: 100n,
     };
     this._default_preferred_token_output_bch_amount = null;
+  }
+
+  getCompilerContext (): CompilerContext {
+    return this._context;
   }
 
   getOutputMinAmount (output: Output): bigint {
@@ -263,7 +287,7 @@ export default class MoriaV0 {
     };
   }
 
-  parseParametersFromLoanNFTCommitment (commitment: Uint8Array): LoanNFTParameters {
+  static parseParametersFromLoanNFTCommitment (commitment: Uint8Array): LoanNFTParameters {
     if (!(commitment instanceof Uint8Array && commitment.length > 20)) {
       throw new ValueError('commitment size does not meet the requirement');
     }
@@ -272,7 +296,7 @@ export default class MoriaV0 {
       amount: binToBigIntUintLE(commitment.slice(20)),
     }
   }
-  parseOracleMessageFromNFTCommitment (commitment: Uint8Array): OracleNFTParameters {
+  static parseOracleMessageFromNFTCommitment (commitment: Uint8Array): OracleNFTParameters {
     if (!(commitment instanceof Uint8Array && commitment.length == 36)) {
       throw new ValueError(`Expecting oracle_utxo nft to have a 36 bytes commitment.`);
     }

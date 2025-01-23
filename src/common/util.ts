@@ -1,8 +1,78 @@
 import type { Fraction, TokenId, Output } from './types.js';
 import { NATIVE_BCH_TOKEN_ID } from './constants.js';
 import { ValueError } from './exceptions.js';
-import * as libauth from '@bitauth/libauth';
-const { binToHex } = libauth;
+import type * as libauth from '@bitauth/libauth';
+
+//
+// binToHex & hexToBin are copied from @bitauth/libauth package
+//
+
+/**
+ * Returns an array of incrementing values starting at `begin` and incrementing
+ * by one for `length`.
+ *
+ * E.g.: `range(3)` → `[0, 1, 2]` and `range(3, 1)` → `[1, 2, 3]`
+ *
+ * @param length - the number of elements in the array
+ * @param begin - the index at which the range starts (default: `0`)
+ */
+export const range = (length: number, begin = 0) => {
+  return Array.from({ length }, (_, index) => begin + index);
+}
+
+/**
+ * Split a string into an array of `chunkLength` strings. The final string may
+ * have a length between 1 and `chunkLength`.
+ *
+ * E.g.: `splitEvery('abcde', 2)` → `['ab', 'cd', 'e']`
+ */
+export const splitEvery = (input: string, chunkLength: number) => {
+  return range(Math.ceil(input.length / chunkLength))
+    .map((index) => index * chunkLength)
+    .map((begin) => input.slice(begin, begin + chunkLength));
+}
+
+const hexByteWidth = 2;
+const hexadecimal = 16;
+
+/**
+ * Decode a hexadecimal-encoded string into a Uint8Array.
+ *
+ * E.g.: `hexToBin('2a64ff')` → `new Uint8Array([42, 100, 255])`
+ *
+ * Note, this method always completes. If `validHex` is not divisible by 2,
+ * the final byte will be parsed as if it were prepended with a `0` (e.g. `aaa`
+ * is interpreted as `aa0a`). If `validHex` is potentially malformed, check
+ * it with {@link isHex} before calling this method.
+ *
+ * For the reverse, see {@link binToHex}.
+ *
+ * @param validHex - a string of valid, hexadecimal-encoded data
+ */
+export const hexToBin = (validHex: string) => {
+  return Uint8Array.from(
+    splitEvery(validHex, hexByteWidth).map((byte) =>
+      parseInt(byte, hexadecimal),
+    ),
+  );
+}
+
+/**
+ * Encode a Uint8Array into a hexadecimal-encoded string.
+ *
+ * E.g.: `binToHex(new Uint8Array([42, 100, 255]))` → `'2a64ff'`
+ *
+ * For the reverse, see {@link hexToBin}.
+ *
+ * @param bytes - a Uint8Array to encode
+ */
+export const binToHex = (bytes: Uint8Array) => {
+  return bytes.reduce(
+    (str, byte) => str + byte.toString(hexadecimal).padStart(hexByteWidth, '0'),
+    '',
+  );
+}
+
 
 export const ceilingValueOfBigIntDivision = (numerator: bigint, denominator: bigint) => {
   const v0 = numerator / denominator;
@@ -108,64 +178,6 @@ export const bigIntArraySortPolyfill = <T>(array: T[], callable: (a: T, b: T) =>
     }
   });
 }
-
-export const walletTemplateP2pkhNonHd: libauth.WalletTemplate = {
-  $schema: 'https://libauth.org/schemas/wallet-template-v0.schema.json',
-  description:
-    'A standard single-factor wallet template that uses Pay-to-Public-Key-Hash (P2PKH), the most common authentication scheme in use on the network.\n\nThis P2PKH template uses BCH Schnorr signatures, reducing the size of transactions.',
-  entities: {
-    owner: {
-      description: 'The individual who can spend from this wallet.',
-      name: 'Owner',
-      scripts: ['lock', 'unlock'],
-      variables: {
-        key: {
-          description: 'The private key that controls this wallet.',
-          name: 'Key',
-          type: 'Key',
-        },
-      },
-    },
-  },
-  name: 'Single Signature (P2PKH)',
-  scripts: {
-    lock: {
-      lockingType: 'standard',
-      name: 'P2PKH Lock',
-      script:
-        'OP_DUP\nOP_HASH160 <$(<key.public_key> OP_HASH160\n)> OP_EQUALVERIFY\nOP_CHECKSIG',
-    },
-    unlock: {
-      name: 'Unlock',
-      script: '<key.schnorr_signature.all_outputs>\n<key.public_key>',
-      unlocks: 'lock',
-    },
-  },
-  supported: ['BCH_2020_05', 'BCH_2021_05', 'BCH_2022_05'],
-  version: 0,
-};
-
-export const publicKeyHashToP2pkhLockingBytecode = (pkh: Uint8Array) => {
-  const compiler = libauth.walletTemplateToCompilerBCH({
-    $schema: 'https://libauth.org/schemas/wallet-template-v0.schema.json',
-    entities: { owner: { scripts: ['lock'], variables: { pkh: { name: 'pkh', type: 'AddressData' } } } },
-    scripts: {
-      lock: {
-        lockingType: 'standard',
-        name: 'P2PKH Lock',
-        script:
-        'OP_DUP\nOP_HASH160 <pkh> OP_EQUALVERIFY\nOP_CHECKSIG',
-      },
-    },
-    supported: ['BCH_2023_05'],
-    version: 0,
-  });
-  const locking_bytecode = compiler.generateBytecode({ data: { bytecode: { pkh } }, scriptId: 'lock' });
-  if (!locking_bytecode.success) {
-    throw new ValueError(libauth.formatError(libauth.P2pkhUtilityError.publicKeyToP2pkhLockingBytecodeCompilation, libauth.stringifyErrors(locking_bytecode.errors)));
-  }
-  return locking_bytecode.bytecode;
-};
 
 export const outputFromLibauthOutput = (la_output: libauth.Output): Output => {
   return {

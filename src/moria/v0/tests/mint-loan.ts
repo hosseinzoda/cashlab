@@ -24,7 +24,7 @@ test('moria-v0-mint-loan', (t) => {
 
   const loan_output: libauth.Output = result.libauth_transaction.outputs[result.loan_utxo.outpoint.index] as any;
 
-  const loan_parameters = moria.parseParametersFromLoanNFTCommitment(loan_output.token?.nft?.commitment as any);
+  const loan_parameters = MoriaV0.parseParametersFromLoanNFTCommitment(loan_output.token?.nft?.commitment as any);
   t.is(loan_parameters.amount, loan_amount);
   t.assert(uint8ArrayEqual(loan_parameters.borrower_pkh, sb.PKH), `Borrower pkh is incorrect!`);
   t.is(loan_output.valueSatoshis, collateral_amount);

@@ -53,6 +53,7 @@ export type Outpoint = { txhash: Uint8Array, index: number };
 export type UTXO<OutputType = Output> = {
   output: OutputType;
   outpoint: Outpoint;
+  block_height?: number;
 };
 
 export type UTXOWithNFT = UTXO<OutputWithNFT>;

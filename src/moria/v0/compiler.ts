@@ -1,8 +1,9 @@
 import * as payoutBuilder from '../../common/payout-builder.js';
 import { ValueError, InvalidProgramState } from '../../common/exceptions.js';
 import {
-  convertTokenIdToUint8Array, publicKeyHashToP2pkhLockingBytecode, outputFromLibauthOutput,
+  convertTokenIdToUint8Array, outputFromLibauthOutput,
 } from '../../common/util.js';
+import { publicKeyHashToP2pkhLockingBytecode } from '../../common/util-libauth-dependent.js';
 import * as libauth from '@bitauth/libauth';
 const {
   binToBigIntUintLE, bigIntToVmNumber, binToHex, privateKeyToP2pkhLockingBytecode,
@@ -41,6 +42,7 @@ const generateMoriaTxSub = (context: CompilerContext, moria_utxo: UTXOWithNFT, m
   const source_outputs: libauth.Output[] = [];
   const inputs: libauth.InputTemplate<libauth.CompilerBCH>[] = [];
   const outputs: libauth.OutputTemplate<libauth.CompilerBCH>[] = [];
+
   { // moria at io#0
     if (moria_utxo.output.token == null || moria_utxo.output.token.nft == null) {
       throw new ValueError('moria_utxo is expected to be an nft!');
@@ -462,6 +464,17 @@ function validateOracleUTXO (context: CompilerContext, utxo: UTXOWithNFT) {
 export function mintLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, oracle_utxo: UTXOWithNFT, input_coins: SpendableCoin[], loan_amount: bigint, collateral_amount: bigint, borrower_pkh: Uint8Array, token_payout_locking_bytecode: Uint8Array, payout_rules: PayoutRule[]): MintTxResult {
   validateMoriaUTXO(context, moria_utxo);
   validateOracleUTXO(context, oracle_utxo);
+  if (!(oracle_utxo.output.token?.nft?.commitment instanceof Uint8Array && oracle_utxo.output.token.nft.commitment.length == 36)) {
+    throw new ValueError(`Expecting oracle_utxo nft to have a 36 bytes commitment.`);
+  }
+  const oracle_price = binToBigIntUintLE(oracle_utxo.output.token.nft.commitment.slice(32));
+  if (!(oracle_price > 0)) {
+    throw new ValueError('oracle price should be greater than zero');
+  }
+  const calcMaxLoan = (a: bigint): bigint => (((a * 2n) / 3n) * oracle_price) / 100000000n;
+  if (loan_amount > calcMaxLoan(collateral_amount)) {
+    throw new ValueError('collateral amount should at least be worth 150% of the loan amount.');
+  }
   const moria_modifier: { script: string, data: any, musd_difference: bigint, collateral_amount?: bigint } = {
     script: 'moria_mint',
     data: {
@@ -963,7 +976,7 @@ export function reduceLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, o
   // collateral = loan_amount * 1 bitcoin / oracle_price * 3 / 2
   // collateral = (loan_amount * 1 bitcoin * rate_numerator) / (oracle_price * rate_denominator)
   const next_collateral_rate_frac = next_collateral_rate == 'MIN' ? { numerator: 3000n, denominator: 2000n } : next_collateral_rate;
-  let next_collateral_amount = (current_loan_amount * 100000000n * next_collateral_rate_frac.numerator) / (oracle_price * next_collateral_rate_frac.denominator);
+  let next_collateral_amount = (next_loan_amount * 100000000n * next_collateral_rate_frac.numerator) / (oracle_price * next_collateral_rate_frac.denominator);
   if (next_collateral_rate == 'MIN') {
     // fix rounding errors
     const calcMaxLoan = (a: bigint): bigint => (((a * 2n) / 3n) * oracle_price) / 100000000n;
@@ -975,12 +988,12 @@ export function reduceLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, o
         throw new InvalidProgramState(`Reached max try to fix rounding error!`)
       }
       const max_loan = calcMaxLoan(next_collateral_amount);
-      if (current_loan_amount > max_loan) {
+      if (next_loan_amount > max_loan) {
         next_collateral_amount = next_collateral_amount + 1n;
         continue;
       }
       const max_loan_with_one_less = calcMaxLoan(next_collateral_amount - 1n);
-      if (current_loan_amount <= max_loan_with_one_less) {
+      if (next_loan_amount <= max_loan_with_one_less) {
         next_collateral_amount = next_collateral_amount - 1n;
         continue;
       }

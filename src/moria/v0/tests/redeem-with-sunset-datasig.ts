@@ -65,7 +65,7 @@ test('moria-v0-redeem-with-sunset-datasig', (t) => {
     },
   ];
 
-  const { price: oracle_price } = moria.parseOracleMessageFromNFTCommitment(ORACLE_UTXO.output.token.nft.commitment);
+  const { price: oracle_price } = MoriaV0.parseOracleMessageFromNFTCommitment(ORACLE_UTXO.output.token.nft.commitment);
   const redeemable = (loan_amount * 100000000n) / oracle_price;
   const remainder = collateral_amount - redeemable;
 

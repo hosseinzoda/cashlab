@@ -19,10 +19,7 @@ export type MoriaTxResult = TxResult & {
   oracle_use_fee: bigint;
 };
 
-export type RedeemTxResult = TxResult & {
-  moria_utxo: UTXOWithNFT;
-  oracle_utxo: UTXOWithNFT;
-  oracle_use_fee: bigint;
+export type RedeemTxResult = MoriaTxResult & {
   redeemer_payouts: UTXO[];
   borrower_payouts: UTXO[];
 };

@@ -42,8 +42,8 @@ test('moria-v0-reduce-loan', (t) => {
 
   const result = moria.reduceLoan(next_moria_utxo, next_oracle_utxo, mint_result.loan_utxo, sb.PRIVATE_KEY, 'MIN', sb.PKH, reduce_input_coins, [ sb.CHANGE_PAYOUT_RULE ]);
 
-  const { price: oracle_price } = moria.parseOracleMessageFromNFTCommitment(ORACLE_UTXO.output.token.nft.commitment);
-  const loan_params = moria.parseParametersFromLoanNFTCommitment(result.loan_utxo.output.token.nft.commitment);
+  const { price: oracle_price } = MoriaV0.parseOracleMessageFromNFTCommitment(ORACLE_UTXO.output.token.nft.commitment);
+  const loan_params = MoriaV0.parseParametersFromLoanNFTCommitment(result.loan_utxo.output.token.nft.commitment);
 
   t.is(result.payouts.filter((a) => uint8ArrayEqual(a.output.locking_bytecode, sb.P2PKH_LOCKING_BYTECODE)).length, result.payouts.length);
 
@@ -55,7 +55,7 @@ test('moria-v0-reduce-loan', (t) => {
 
   t.assert(input_bch_amount < payouts_bch_amount);
 
-  const collateral_ratio = Number(result.loan_utxo.output.amount) / Number(((loan_amount * 100000000n) / oracle_price))
+  const collateral_ratio = Number(result.loan_utxo.output.amount) / Number(((loan_params.amount * 100000000n) / oracle_price))
   t.assert(Math.abs(collateral_ratio - 1.5) < 0.005);
 
   t.is(loan_amount, loan_params.amount + input_musd_amount);
