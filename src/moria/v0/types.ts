@@ -25,17 +25,19 @@ export type RedeemTxResult = MoriaTxResult & {
 };
 
 export type MintTxResult = MoriaTxResult & {
-  loan_utxo: UTXOWithNFT,
+  loan_utxo: UTXOWithNFT;
 };
 
 export type AddCollateralTxResult = TxResult & {
-  loan_utxo: UTXOWithNFT,
+  loan_utxo: UTXOWithNFT;
 };
 
 export type RefinanceLoanResult = {
   tx_result_chain: TxResult[];
   txfee: bigint;
   payouts: UTXO[];
+  moria_utxo: UTXOWithNFT;
+  oracle_utxo: UTXOWithNFT;
   loan_utxo: UTXOWithNFT,
   oracle_use_fee: bigint;
 };

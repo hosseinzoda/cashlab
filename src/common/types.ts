@@ -1,3 +1,4 @@
+import type { Transaction as libauthTransaction, Output as libauthOutput } from '@bitauth/libauth';
 export type NativeBCHTokenId = 'BCH';
 
 export type TokenId = NativeBCHTokenId | string;
@@ -99,3 +100,18 @@ export type PayoutChangeRule = PayoutRuleCommon & {
 export type PayoutRule =
   | PayoutFixedAmountRule
   | PayoutChangeRule;
+
+export type TxResult = {
+  txbin: Uint8Array;
+  txhash: Uint8Array;
+  txfee: bigint;
+  payouts: UTXO[];
+  libauth_transaction: libauthTransaction;
+  libauth_source_outputs: libauthOutput[];
+};
+
+export type ChainedTxResult = {
+  chain: TxResult[];
+  txfee: bigint;
+  payouts: UTXO[];
+};

@@ -3,21 +3,23 @@ import { ValueError, InvalidProgramState } from '../../common/exceptions.js';
 import {
   convertTokenIdToUint8Array, outputFromLibauthOutput,
 } from '../../common/util.js';
-import { publicKeyHashToP2pkhLockingBytecode } from '../../common/util-libauth-dependent.js';
+import {
+  publicKeyHashToP2pkhLockingBytecode, convertSpendableCoinsToLAInputsWithSourceOutput,
+  calcAvailablePayoutFromLASourceOutputsAndOutputs,
+} from '../../common/util-libauth-dependent.js';
 import * as libauth from '@bitauth/libauth';
 const {
-  binToBigIntUintLE, bigIntToVmNumber, binToHex, privateKeyToP2pkhLockingBytecode,
-  binToNumberUint32LE, 
+  binToBigIntUintLE, bigIntToVmNumber, privateKeyToP2pkhLockingBytecode, binToNumberUint32LE,
 } = libauth;
 import type {
   MoriaTxResult, MintTxResult, RedeemTxResult, AddCollateralTxResult,
   RefinanceLoanResult, CompilerContext
 } from './types.js';
 import type {
-  UTXO, UTXOWithNFT, TokenId, Output, OutputWithFT, OutputWithNFT, SpendableCoin, PayoutRule, Fraction,
+  UTXO, UTXOWithNFT, TokenId, Output, OutputWithFT, OutputWithNFT, SpendableCoin, PayoutRule,
 } from '../../common/types.js';
 import {
-  NonFungibleTokenCapability, SpendableCoinType, PayoutAmountRuleType, NATIVE_BCH_TOKEN_ID,
+  NonFungibleTokenCapability, SpendableCoinType, PayoutAmountRuleType,
 } from '../../common/constants.js';
 
 const makePayoutContext = (context: CompilerContext, calcTxFeeWithOutputs: (outputs: Output[]) => bigint) => {
@@ -201,8 +203,6 @@ const generateMoriaTxSub = (context: CompilerContext, moria_utxo: UTXOWithNFT, m
           commitment: a.token.nft.commitment,
         } : undefined,
       } : undefined,
-
-
       valueSatoshis: a.amount,
     })) ];
     const result = libauth.generateTransaction({
@@ -216,7 +216,7 @@ const generateMoriaTxSub = (context: CompilerContext, moria_utxo: UTXOWithNFT, m
     }
     return BigInt(libauth.encodeTransaction(result.transaction).length) * context.txfee_per_byte;
   };
-  const available_payouts: Array<{ token_id: TokenId, amount: bigint }> = calcAvailablePayout(source_outputs as libauth.Output<never, never>[], outputs as libauth.Output<never, never>[]);
+  const available_payouts: Array<{ token_id: TokenId, amount: bigint }> = calcAvailablePayoutFromLASourceOutputsAndOutputs(source_outputs as libauth.Output<never, never>[], outputs as libauth.Output<never, never>[]);
   // validate token/bch amounts
   if (available_payouts.filter((a) => a.amount < 0n).length > 0) {
     throw new ValueError(`Sum of the inputs & outputs is negative for the following token(s): ${available_payouts.filter((a) => a.amount < 0n).map((a) => a.token_id).join(', ')}`);
@@ -346,89 +346,6 @@ const generateMoriaTxSub = (context: CompilerContext, moria_utxo: UTXOWithNFT, m
   };
 };
 
-const spendableCoinsToLAInputsWithSourceOutput = (input_coins: SpendableCoin[]): Array<{ input: libauth.InputTemplate<libauth.CompilerBCH>, source_output: libauth.Output }> => {
-  const p2pkh_compiler = libauth.walletTemplateToCompilerBCH(libauth.walletTemplateP2pkhNonHd);
-  const result: Array<{ input: libauth.InputTemplate<libauth.CompilerBCH>, source_output: libauth.Output }> = [];
-  // add input coins
-  for (const coin of input_coins) {
-    if (coin.output?.token?.nft) {
-      throw new ValueError(`A provided funding coin is a nft, outpoint: ${binToHex(coin.outpoint.txhash)}:${coin.outpoint.index}`);
-    }
-    if (coin.type == SpendableCoinType.P2PKH) {
-      const source_output = {
-        lockingBytecode: coin.output.locking_bytecode,
-        valueSatoshis: coin.output.amount,
-        token: coin.output.token ? {
-          amount: coin.output.token.amount,
-          category: convertTokenIdToUint8Array(coin.output.token.token_id),
-        } : undefined,
-      };
-      const data: libauth.CompilationData<never> = {
-        keys: {
-          privateKeys: {
-            key: coin.key,
-          },
-        },
-      };
-      const input = {
-        outpointIndex: coin.outpoint.index,
-        outpointTransactionHash: coin.outpoint.txhash,
-        sequenceNumber: 0,
-        unlockingBytecode: {
-          compiler: p2pkh_compiler,
-          script: 'unlock',
-          data,
-          valueSatoshis: coin.output.amount,
-          token: !coin.output.token ? undefined : {
-            amount: coin.output.token.amount,
-            category: convertTokenIdToUint8Array(coin.output.token.token_id),
-          },
-        },
-      };
-      result.push({ input, source_output });
-    } else {
-      throw new ValueError(`input_coin has an unknown type: ${coin.type}`)
-    }
-  }
-  return result;
-}
-
-const calcAvailablePayout = (source_outputs: libauth.Output<never, never>[], outputs: libauth.Output<never, never>[]): Array<{ token_id: TokenId, amount: bigint }> => {
-  const available_payouts: Array<{ token_id: TokenId, amount: bigint }> = [ { token_id: NATIVE_BCH_TOKEN_ID, amount: 0n } ];
-  const bch_available_payout = available_payouts.find((a) => a.token_id == NATIVE_BCH_TOKEN_ID);
-  if (bch_available_payout == null) {
-    /* c8 ignore next */
-    throw new InvalidProgramState('bch_available_payout == null; !!!');
-  }
-  // deduct outputs
-  for (const output of outputs) {
-    bch_available_payout.amount -= output.valueSatoshis;
-    if (output.token && output.token.amount > 0n) {
-      const token_id: TokenId = binToHex(output.token.category);
-      let available_payout = available_payouts.find((a) => a.token_id == token_id);
-      if (available_payout == null) {
-        available_payout = { token_id, amount: 0n };
-        available_payouts.push(available_payout);
-      }
-      available_payout.amount -= output.token.amount;
-    }
-  }
-  // add inputs
-  for (const output of source_outputs) {
-    bch_available_payout.amount += output.valueSatoshis;
-    if (output.token && output.token.amount > 0n) {
-      const token_id: TokenId = binToHex(output.token.category);
-      let available_payout = available_payouts.find((a) => a.token_id == token_id);
-      if (available_payout == null) {
-        available_payout = { token_id, amount: 0n };
-        available_payouts.push(available_payout);
-      }
-      available_payout.amount += output.token.amount;
-    }
-  }
-  return available_payouts;
-};
-
 function validateMoriaUTXO (context: CompilerContext, utxo: UTXOWithNFT) {
   if (utxo.output.token == null || utxo.output.token.token_id != context.musd_token_id) {
     throw new ValueError(`Expecting moria_utxo to have the following token_id: ${context.musd_token_id}`);
@@ -485,7 +402,7 @@ export function mintLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, ora
     musd_difference: loan_amount,
     collateral_amount,
   };
-  const additional_inputs: Array<{ input: libauth.InputTemplate<libauth.CompilerBCH>, source_output: libauth.Output }> = spendableCoinsToLAInputsWithSourceOutput(input_coins);
+  const additional_inputs: Array<{ input: libauth.InputTemplate<libauth.CompilerBCH>, source_output: libauth.Output }> = convertSpendableCoinsToLAInputsWithSourceOutput(input_coins);
   const {
     transaction, source_outputs, payout_result_list,
     moria_utxo: next_moria_utxo, oracle_utxo: next_oracle_utxo, loan_utxo,
@@ -525,7 +442,7 @@ export function mintLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, ora
  * @param oracle_utxo - The oracle's utxo.
  * @param loan_utxo - The current loan's utxo.
  * @param loan_private_key - The private key of the current loan.
- * @param input_coins - A set of spendable coins to fund the refinance procedure.
+ * @param input_coins - A set of spendable coins to fund the transaction.
  * @param payout_rules - A list of payout rules. The payout rules is expected to not have more than two outputs.
  * @returns A tx that pays out the collateral in exchange for MUSD
  *
@@ -577,7 +494,7 @@ export function repayLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, or
   };
   const additional_inputs: Array<{ input: libauth.InputTemplate<libauth.CompilerBCH>, source_output: libauth.Output }> = [
     { input: la_loan_input, source_output: la_loan_source_output },
-    ...spendableCoinsToLAInputsWithSourceOutput(input_coins)
+    ...convertSpendableCoinsToLAInputsWithSourceOutput(input_coins)
   ];
   const {
     transaction, source_outputs, payout_result_list,
@@ -603,7 +520,7 @@ export function repayLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, or
  * @param moria_utxo - The moria's utxo.
  * @param oracle_utxo - The oracle's utxo.
  * @param loan_utxo - The current loan's utxo.
- * @param input_coins - A set of spendable coins to fund the refinance procedure.
+ * @param input_coins - A set of spendable coins to fund the transaction.
  * @param payout_rules - A list of payout rules. The payout rules is expected to not have more than two outputs.
  * @returns A tx that pays out the collateral in exchange for MUSD
  *
@@ -649,7 +566,7 @@ export function liquidateLoan (context: CompilerContext, moria_utxo: UTXOWithNFT
   };
   const additional_inputs: Array<{ input: libauth.InputTemplate<libauth.CompilerBCH>, source_output: libauth.Output }> = [
     { input: la_loan_input, source_output: la_loan_source_output },
-    ...spendableCoinsToLAInputsWithSourceOutput(input_coins)
+    ...convertSpendableCoinsToLAInputsWithSourceOutput(input_coins)
   ];
   const {
     transaction, source_outputs, payout_result_list,
@@ -675,7 +592,7 @@ export function liquidateLoan (context: CompilerContext, moria_utxo: UTXOWithNFT
  * @param oracle_utxo - The oracle's utxo.
  * @param loan_utxo - The current loan's utxo.
  * @param sunset_datasig - A unique sig which will be revealed on the blockchain once the sunset event occurs.
- * @param input_coins - A set of spendable coins to fund the refinance procedure.
+ * @param input_coins - A set of spendable coins to fund the transaction.
  * @param payout_rules - A list of payout rules. The payout rules is expected to not have more than two outputs.
  * @returns A tx that redeems MUSD with BCH payouts
  *
@@ -744,7 +661,7 @@ export function redeemWithSunsetSignature (context: CompilerContext, moria_utxo:
   };
   const additional_inputs: Array<{ input: libauth.InputTemplate<libauth.CompilerBCH>, source_output: libauth.Output }> = [
     { input: la_loan_input, source_output: la_loan_source_output },
-    ...spendableCoinsToLAInputsWithSourceOutput(input_coins)
+    ...convertSpendableCoinsToLAInputsWithSourceOutput(input_coins)
   ];
   const {
     transaction, source_outputs, payout_result_list,
@@ -770,7 +687,7 @@ export function redeemWithSunsetSignature (context: CompilerContext, moria_utxo:
  * @param loan_utxo - The current loan's utxo.
  * @param amount - The amount to increase the collateral.
  * @param loan_private_key - The private key of the current loan.
- * @param input_coins - A set of spendable coins to fund the refinance procedure.
+ * @param input_coins - A set of spendable coins to fund the transaction.
  * @param payout_rules - A list of payout rules.
  * @returns add collateral tx result
  *
@@ -846,11 +763,11 @@ export function addCollateral (context: CompilerContext, loan_utxo: UTXOWithNFT,
       },
     });
   }
-  for (const { input, source_output } of spendableCoinsToLAInputsWithSourceOutput(input_coins)) {
+  for (const { input, source_output } of convertSpendableCoinsToLAInputsWithSourceOutput(input_coins)) {
     la_inputs.push(input);
     la_source_outputs.push(source_output);
   }
-  const available_payouts: Array<{ token_id: TokenId, amount: bigint }> = calcAvailablePayout(la_source_outputs as libauth.Output<never, never>[], la_outputs as libauth.Output<never, never>[]);
+  const available_payouts: Array<{ token_id: TokenId, amount: bigint }> = calcAvailablePayoutFromLASourceOutputsAndOutputs(la_source_outputs as libauth.Output<never, never>[], la_outputs as libauth.Output<never, never>[]);
   // validate token/bch amounts
   if (available_payouts.filter((a) => a.amount < 0n).length > 0) {
     throw new ValueError(`Sum of the inputs & outputs is negative for the following token(s): ${available_payouts.filter((a) => a.amount < 0n).map((a) => a.token_id).join(', ')}`);
@@ -919,23 +836,24 @@ export function addCollateral (context: CompilerContext, loan_utxo: UTXOWithNFT,
 }
 
 /**
- * Mint a new loan to pay back another loan to reduce the size and/or the collateral of the loan.
- * Contrary to the name reduce this method allows the collateral level to increase.
+ * Mint a new loan to pay back another loan in order to reduce or increase the size and/or
+ * add or decrease the collateral rate of the loan.
  * 
  *
  * @param context - The compiler's context.
  * @param moria_utxo - The moria's utxo.
  * @param oracle_utxo - The oracle's utxo.
+ * @param next_loan_amount - the amount of the next loan
+ * @param next_collateral_amount - The collateral amount for the substitute loan
  * @param current_loan_utxo - The current loan's utxo.
  * @param current_loan_private_key - The private key of the current loan.
- * @param next_collateral_ratio - A fraction that represents the ratio of the collateral at the current oracle price, Or pass 'MIN' to provide the minimum collateral.
  * @param next_loan_pkh - borrower's public key's hash160, the pkh's format is equivalent to pkh used in p2pkh.
  * @param input_coins - A set of spendable coins to fund the refinance procedure.
  * @param payout_rules - A list of payout rules. The payout rules is expected to not have more than two outputs.
  * @returns refinance tx chain with details
  *
  */
-export function reduceLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, oracle_utxo: UTXOWithNFT, current_loan_utxo: UTXOWithNFT, current_loan_private_key: Uint8Array, next_collateral_rate: Fraction | 'MIN', next_loan_pkh: Uint8Array, input_coins: SpendableCoin[], payout_rules: PayoutRule[]): RefinanceLoanResult {
+export function refiLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, oracle_utxo: UTXOWithNFT, next_loan_amount: bigint, next_collateral_amount: bigint, current_loan_utxo: UTXOWithNFT, current_loan_private_key: Uint8Array, next_loan_pkh: Uint8Array, input_coins: SpendableCoin[], payout_rules: PayoutRule[]): RefinanceLoanResult {
   validateMoriaUTXO(context, moria_utxo);
   validateOracleUTXO(context, oracle_utxo);
   if (!(current_loan_utxo.output.token?.nft?.commitment instanceof Uint8Array && current_loan_utxo.output.token.nft.commitment.length > 20)) {
@@ -944,13 +862,6 @@ export function reduceLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, o
   const current_loan_amount = binToBigIntUintLE(current_loan_utxo.output.token.nft.commitment.slice(20));
   if (current_loan_amount <= 0n) {
     throw new ValueError('loan_amount should be greater than zero!');
-  }
-  if (!(oracle_utxo.output.token?.nft?.commitment instanceof Uint8Array && oracle_utxo.output.token.nft.commitment.length == 36)) {
-    throw new ValueError(`Expecting oracle_utxo nft to have a 36 bytes commitment.`);
-  }
-  const oracle_price = binToBigIntUintLE(oracle_utxo.output.token.nft.commitment.slice(32));
-  if (!(oracle_price > 0)) {
-    throw new ValueError('oracle price should be greater than zero');
   }
   // use current_loan_private_key to hold the change of mintLoan
   const mint_payout_locking_bytecode = privateKeyToP2pkhLockingBytecode({ privateKey: current_loan_private_key });
@@ -964,41 +875,8 @@ export function reduceLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, o
   const mint_input_coins = input_coins.filter((a) => a.output.token == null);
   const musd_input_coins: SpendableCoin<OutputWithFT>[] = input_coins.filter((a) => a.output.token?.token_id == context.musd_token_id && a.output.token?.amount > 0n) as SpendableCoin<OutputWithFT>[];
   const repay_token_amount = musd_input_coins.reduce((a, b) => a + b.output.token.amount, 0n);
-  const next_loan_amount = current_loan_amount - repay_token_amount;
-  if (next_loan_amount <= 0n) {
-    throw new ValueError(`In a reduceLoan attempt, The next_loan_amount is less that or equal to zero.`);
-  }
-  // loan_base = collateral * 2 / 3
-  // loan_base * 3 / 2 = collateral
-  // loan_amount = (loan_base * oracle_price) / 1 bitcoin
-  // loan_amount * 1 bitcoin = loan_base * oracle_price
-  // loan_base = loan_amount * 1 bitcoin / oracle_price
-  // collateral = loan_amount * 1 bitcoin / oracle_price * 3 / 2
-  // collateral = (loan_amount * 1 bitcoin * rate_numerator) / (oracle_price * rate_denominator)
-  const next_collateral_rate_frac = next_collateral_rate == 'MIN' ? { numerator: 3000n, denominator: 2000n } : next_collateral_rate;
-  let next_collateral_amount = (next_loan_amount * 100000000n * next_collateral_rate_frac.numerator) / (oracle_price * next_collateral_rate_frac.denominator);
-  if (next_collateral_rate == 'MIN') {
-    // fix rounding errors
-    const calcMaxLoan = (a: bigint): bigint => (((a * 2n) / 3n) * oracle_price) / 100000000n;
-    let max_try = 100;
-    // iterative search
-    while (true) {
-      if (max_try-- < 0) {
-        /* c8 ignore next */
-        throw new InvalidProgramState(`Reached max try to fix rounding error!`)
-      }
-      const max_loan = calcMaxLoan(next_collateral_amount);
-      if (next_loan_amount > max_loan) {
-        next_collateral_amount = next_collateral_amount + 1n;
-        continue;
-      }
-      const max_loan_with_one_less = calcMaxLoan(next_collateral_amount - 1n);
-      if (next_loan_amount <= max_loan_with_one_less) {
-        next_collateral_amount = next_collateral_amount - 1n;
-        continue;
-      }
-      break;
-    }
+  if (!(next_loan_amount + repay_token_amount >= current_loan_amount)) {
+    throw new ValueError(`next_loan_amount + input_musd_coins should be equal or greater than current_loan_amount`);
   }
   const mint_tx_result = mintLoan(context, moria_utxo, oracle_utxo, mint_input_coins, next_loan_amount, next_collateral_amount, next_loan_pkh, mint_payout_locking_bytecode, mint_payout_rules);
   const repay_input_coins: SpendableCoin<Output>[] = [ ...musd_input_coins ];
@@ -1019,9 +897,10 @@ export function reduceLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, o
     ],
     txfee: mint_tx_result.txfee + repay_tx_result.txfee,
     payouts: repay_tx_result.payouts,
+    moria_utxo: repay_tx_result.moria_utxo,
+    oracle_utxo: repay_tx_result.oracle_utxo,
     loan_utxo: mint_tx_result.loan_utxo,
     oracle_use_fee: mint_tx_result.oracle_use_fee + repay_tx_result.oracle_use_fee,
   };
 }
-
 

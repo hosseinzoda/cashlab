@@ -10,7 +10,7 @@ import { ValueError, InvalidProgramState } from '../../common/exceptions.js';
 import { convertTokenIdToUint8Array } from '../../common/util.js';
 import {
   mintLoan, repayLoan, liquidateLoan,
-  redeemWithSunsetSignature, addCollateral, reduceLoan,
+  redeemWithSunsetSignature, addCollateral, refiLoan,
 } from './compiler.js';
 import * as libauth from '@bitauth/libauth';
 const { hexToBin, binToBigIntUintLE, binToNumberUint32LE } = libauth;
@@ -245,23 +245,24 @@ export default class MoriaV0 {
   }
 
   /**
-   * Mint a new loan to pay back another loan to reduce the size and/or the collateral of the loan.
-   * Contrary to the name reduce this method allows the collateral level to increase.
+   * Mint a new loan to pay back another loan in order to reduce or increase the size and/or
+   * add or decrease the collateral rate of the loan.
    * 
    *
    * @param moria_utxo - The moria's utxo.
    * @param oracle_utxo - The oracle's utxo.
+   * @param next_loan_amount - the amount of the next loan
+   * @param next_collateral_amount - The collateral amount for the substitute loan
    * @param current_loan_utxo - The current loan's utxo.
    * @param current_loan_private_key - The private key of the current loan.
-   * @param next_collateral_ratio - A fraction that represents the ratio of the collateral at the current oracle price, Or pass 'MIN' to provide the minimum collateral.
    * @param next_loan_pkh - borrower's public key's hash160, the pkh's format is equivalent to pkh used in p2pkh.
    * @param input_coins - A set of spendable coins to fund the refinance procedure.
    * @param payout_rules - A list of payout rules. The payout rules is expected to not have more than two outputs.
    * @returns refinance tx chain with details
    *
    */
-  reduceLoan (moria_utxo: UTXOWithNFT, oracle_utxo: UTXOWithNFT, current_loan_utxo: UTXOWithNFT, current_loan_private_key: Uint8Array, next_collateral_rate: Fraction | 'MIN', next_loan_pkh: Uint8Array, input_coins: SpendableCoin[], payout_rules: PayoutRule[]): RefinanceLoanResult {
-    return reduceLoan(this._context, moria_utxo, oracle_utxo, current_loan_utxo, current_loan_private_key, next_collateral_rate, next_loan_pkh, input_coins, payout_rules);
+  refiLoan (moria_utxo: UTXOWithNFT, oracle_utxo: UTXOWithNFT, next_loan_amount: bigint, next_collateral_amount: bigint, current_loan_utxo: UTXOWithNFT, current_loan_private_key: Uint8Array, next_loan_pkh: Uint8Array, input_coins: SpendableCoin[], payout_rules: PayoutRule[]): RefinanceLoanResult {
+    return refiLoan(this._context, moria_utxo, oracle_utxo, next_loan_amount, next_collateral_amount, current_loan_utxo, current_loan_private_key, next_loan_pkh, input_coins, payout_rules);
   }
 
 
@@ -287,6 +288,68 @@ export default class MoriaV0 {
     };
   }
 
+  /**
+   * Helper function for calculating the collateral amount for a target collateral rate at a given price.
+   *
+   *
+   * @param loan_amount - Loan amount.
+   * @param rate - Collateral rate represented as a Fraction or literal string 'MIN' for minimum collateral amount possible.
+   * @param oracle_price - The token price from the oracle
+   * @returns the collateral amount
+   *
+   */
+  static calculateCollateralAmountForTargetRate (loan_amount: bigint, rate: 'MIN' | Fraction, oracle_price: bigint): bigint {
+    // loan_base = collateral * 2 / 3
+    // loan_base * 3 / 2 = collateral
+    // loan_amount = (loan_base * oracle_price) / 1 bitcoin
+    // loan_amount * 1 bitcoin = loan_base * oracle_price
+    // loan_base = loan_amount * 1 bitcoin / oracle_price
+    // collateral = loan_amount * 1 bitcoin / oracle_price * 3 / 2
+    // collateral = (loan_amount * 1 bitcoin * rate_numerator) / (oracle_price * rate_denominator)
+    const rate_frac = rate == 'MIN' ? { numerator: 3000n, denominator: 2000n } : rate;
+    let collateral_amount = (loan_amount * 100000000n * rate_frac.numerator) / (oracle_price * rate_frac.denominator);
+    if (rate == 'MIN') {
+      // fix rounding errors
+      const calcMaxLoan = (a: bigint): bigint => (((a * 2n) / 3n) * oracle_price) / 100000000n;
+      let max_try = 100;
+      // iterative search
+      while (true) {
+        if (max_try-- < 0) {
+          /* c8 ignore next */
+          throw new InvalidProgramState(`Reached max try to fix rounding error!`)
+        }
+        const max_loan = calcMaxLoan(collateral_amount);
+        if (loan_amount > max_loan) {
+          collateral_amount = collateral_amount + 1n;
+          continue;
+        }
+        const max_loan_with_one_less = calcMaxLoan(collateral_amount - 1n);
+        if (loan_amount <= max_loan_with_one_less) {
+          collateral_amount = collateral_amount - 1n;
+          continue;
+        }
+        break;
+      }
+    }
+    return collateral_amount;
+  }
+  /**
+   * Helper function for calculating the loan amount with the collateral_amount with a target collateral rate at a given price.
+   *
+   *
+   * @param loan_amount - Loan amount.
+   * @param rate - Collateral rate represented as a Fraction or literal string 'MIN' for minimum collateral amount possible.
+   * @param oracle_price - The token price from the oracle
+   * @returns the collateral amount
+   *
+   */
+  static calculateLoanAmountWithAvailableCollateralForTargetRate (collateral_amount: bigint, rate: 'MIN' | Fraction, oracle_price: bigint): bigint {
+    // loan_base = collateral * 2 / 3
+    // loan_base * 3 / 2 = collateral
+    // loan_amount = (loan_base * oracle_price) / 1 bitcoin
+    const rate_frac = rate == 'MIN' ? { numerator: 3n, denominator: 2n } : rate;
+    return (collateral_amount * rate_frac.denominator /  rate_frac.numerator) * oracle_price / 100000000n;
+  }
   static parseParametersFromLoanNFTCommitment (commitment: Uint8Array): LoanNFTParameters {
     if (!(commitment instanceof Uint8Array && commitment.length > 20)) {
       throw new ValueError('commitment size does not meet the requirement');

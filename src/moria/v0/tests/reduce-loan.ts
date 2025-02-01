@@ -39,10 +39,11 @@ test('moria-v0-reduce-loan', (t) => {
 
   const input_bch_amount = reduce_input_coins.reduce((a, b) => a + b.output.amount, 0n);
   const input_musd_amount = reduce_input_coins.filter((a) => a?.output?.token?.token_id == musd_token_id).reduce((a, b) => a + (b.output.token?.amount as bigint), 0n);
-
-  const result = moria.reduceLoan(next_moria_utxo, next_oracle_utxo, mint_result.loan_utxo, sb.PRIVATE_KEY, 'MIN', sb.PKH, reduce_input_coins, [ sb.CHANGE_PAYOUT_RULE ]);
-
+  const next_loan_amount = loan_amount - input_musd_amount;
   const { price: oracle_price } = MoriaV0.parseOracleMessageFromNFTCommitment(ORACLE_UTXO.output.token.nft.commitment);
+  const next_collateral_amount = MoriaV0.calculateCollateralAmountForTargetRate(next_loan_amount, 'MIN', oracle_price);
+
+  const result = moria.refiLoan(next_moria_utxo, next_oracle_utxo, next_loan_amount, next_collateral_amount, mint_result.loan_utxo, sb.PRIVATE_KEY, sb.PKH, reduce_input_coins, [ sb.CHANGE_PAYOUT_RULE ]);
   const loan_params = MoriaV0.parseParametersFromLoanNFTCommitment(result.loan_utxo.output.token.nft.commitment);
 
   t.is(result.payouts.filter((a) => uint8ArrayEqual(a.output.locking_bytecode, sb.P2PKH_LOCKING_BYTECODE)).length, result.payouts.length);
