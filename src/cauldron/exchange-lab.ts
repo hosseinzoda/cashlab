@@ -32,7 +32,7 @@ const defaultOutputMinBCHReserve = (): bigint => 693n;
 export class InsufficientCapitalInPools extends Exception { };
 ExceptionRegistry.add('InsufficientCapitalInPools', InsufficientCapitalInPools);
 
-const prepareForARequestToConstructTrade = (exlab: ExchangeLab, supply_token_id: TokenId, demand_token_id: TokenId, input_pools: PoolV0[]): { pools_pair: Array<PoolPair & { pool: PoolV0 }> } => {
+export const prepareForARequestToConstructTrade = (exlab: ExchangeLab, supply_token_id: TokenId, demand_token_id: TokenId, input_pools: PoolV0[]): { pools_pair: Array<PoolPair & { pool: PoolV0 }> } => {
   const pools_pair: Array<PoolPair & { pool: PoolV0 }> = [];
   if (demand_token_id == NATIVE_BCH_TOKEN_ID) {
     for (const pool of input_pools) {
