@@ -2,6 +2,14 @@
 
 All notable changes of this module is documented in this file, Documenting changelog has start from version `0.0.9`.
 
+## [1.0.0] - 2025-03-22
+
+### CHANGED
+
+- Make the code compatible with node up to v23.10.0
+- Migrate to a monorepo project. @cashlab/*
+- Migrate to pnpm package manager
+
 ## [0.1.0] - 2024-12-20
 
 ### ADDED

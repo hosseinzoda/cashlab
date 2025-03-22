@@ -1,0 +1,4 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "sourceLinkTemplate": "https://github.com/hosseinzoda/cashlab/blob/{path}#L{line}"
+}

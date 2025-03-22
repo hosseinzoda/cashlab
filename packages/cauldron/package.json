@@ -1,0 +1,40 @@
+{
+  "name": "@cashlab/cauldron",
+  "version": "1.0.0",
+  "description": "cashlab cauldron lib",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./out/index.d.ts",
+      "import": "./out/index.js"
+    },
+    "./*.js": {
+      "types": "./out/*.d.ts",
+      "import": "./out/*.js"
+    },
+    "./*.json": "./out/*.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hosseinzoda/cashlab.git",
+    "directory": "packages/cauldron"
+  },
+  "keywords": [
+    "BCH",
+    "defi"
+  ],
+  "author": "Hossein Zoda",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hosseinzoda/cashlab/issues"
+  },
+  "homepage": "https://github.com/hosseinzoda/cashlab#readme",
+  "scripts": {
+    "prepare": "pnpm run build",
+    "build": "tsc -p tsconfig.json",
+    "typedoc": "typedoc src/index.ts --out out/docs --options ../../config/typedoc.json"
+  },
+  "dependencies": {
+    "@cashlab/common": "workspace:*"
+  }
+}
