@@ -40,7 +40,7 @@ export const walletTemplateP2pkhNonHd: libauth.WalletTemplate = {
   version: 0,
 };
 
-export const publicKeyHashToP2pkhLockingBytecode = (pkh: Uint8Array) => {
+export const publicKeyHashToP2pkhLockingBytecode = (pkh: Uint8Array): Uint8Array => {
   const compiler = libauth.walletTemplateToCompilerBCH({
     $schema: 'https://libauth.org/schemas/wallet-template-v0.schema.json',
     entities: { owner: { scripts: ['lock'], variables: { pkh: { name: 'pkh', type: 'AddressData' } } } },

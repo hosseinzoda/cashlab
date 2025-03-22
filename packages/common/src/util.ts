@@ -48,7 +48,7 @@ const hexadecimal = 16;
  *
  * @param validHex - a string of valid, hexadecimal-encoded data
  */
-export const hexToBin = (validHex: string) => {
+export const hexToBin = (validHex: string): Uint8Array => {
   return Uint8Array.from(
     splitEvery(validHex, hexByteWidth).map((byte) =>
       parseInt(byte, hexadecimal),
@@ -65,7 +65,7 @@ export const hexToBin = (validHex: string) => {
  *
  * @param bytes - a Uint8Array to encode
  */
-export const binToHex = (bytes: Uint8Array) => {
+export const binToHex = (bytes: Uint8Array): string => {
   return bytes.reduce(
     (str, byte) => str + byte.toString(hexadecimal).padStart(hexByteWidth, '0'),
     '',

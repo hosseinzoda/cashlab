@@ -390,3 +390,5 @@ export default class MoriaV0 {
     };
   }
 }
+
+export { MoriaV0 };
