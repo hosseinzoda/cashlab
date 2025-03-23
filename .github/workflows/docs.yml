@@ -1,0 +1,43 @@
+name: docs github pages CI
+on:
+  push:
+    branches: [ "main" ]
+jobs:
+  # Build job
+  build:
+    # Specify runner + build & upload the static files as an artifact
+    runs-on: ubuntu-latest
+    steps:
+      # checkout the repo under $GITHUB_WORKSPACE
+      - uses: actions/checkout@v4
+      - uses: "pnpm/action-setup@v4"
+      - name: Build static files
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          pnpm install
+          pnpm run typedoc
+          mkdir temp
+          for package_dir in packages/*/ ; do
+            if [ -d "${package_dir}out/docs" ]; then
+              mv "${package_dir}out/docs" "temp/$(basename $package_dir)"
+            fi
+          done
+      - name: Upload static files as artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: temp/
+  # Deployment job
+  deploy:
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
