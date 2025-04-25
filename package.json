@@ -8,6 +8,9 @@
     "test:xc8": "ava --config ./config/ava.config.js",
     "typedoc": "pnpm -r run typedoc"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "devDependencies": {
     "@ava/typescript": "^5.0.0",
     "@types/node": "^20.14.10",

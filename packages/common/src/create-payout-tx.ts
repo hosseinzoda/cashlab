@@ -48,7 +48,7 @@ const convertToJSONSerializable = (v: any): any => {
 
 /**
  * Create a chain transactions to payout a set of addresses/locking_bytecodes. Input coins provide the funding needed to build the payouts.
- * The instructions are provided by the `payout_rules`.
+ * The payout instructions are provided by the `payout_rules`.
  *
  * @param context is the payout context.
  * @param input_coins is a list of spendable coins to use as input to fund the payouts.
@@ -65,7 +65,7 @@ export function createPayoutChainedTx (context: CreatePayoutTxContext, input_coi
   }
   const change_payout_rule = payout_rules.find((a) => a.type == PayoutAmountRuleType.CHANGE && a.spending_parameters != null);
   if (change_payout_rule == null) {
-    throw new ValueError(`One payout rule with spending parameters is needed to create-payout-chained-tx`);
+    throw new ValueError(`One change payout rule with spending parameters is needed to create-payout-chained-tx`);
   }
   if (change_payout_rule.spending_parameters?.type != SpendableCoinType.P2PKH) {
     throw new ValueError(`The provided change payout rule should have its spending_parameters with P2PKH type.`);
@@ -97,6 +97,37 @@ export function createPayoutChainedTx (context: CreatePayoutTxContext, input_coi
   }
   return result;
 }
+
+
+/**
+ * Create a transaction to payout a set of addresses/locking_bytecodes. Input coins provide the funding needed to build the payouts.
+ * The payout instructions are provided by the `payout_rules`.
+ *
+ * @param context is the payout context.
+ * @param input_coins is a list of spendable coins to use as input to fund the payouts.
+ * @param payout_rules is a set of rules provided as the payout instructions
+ *
+ * @returns A chain transaction results.
+ */
+export function createPayoutTx (context: CreatePayoutTxContext, input_coins: SpendableCoin[], payout_rules: PayoutRule[]): TxResult {
+  if (!(context.txfee_per_byte >= 0n)) {
+    throw new ValueError('txfee should be greater than or equal to zero, txfee_per_byte type: bigint');
+  }
+  if (input_coins.length == 0) {
+    throw new ValueError('number of input_coins should be greater than zero');
+  }
+  const change_payout_rule = payout_rules.find((a) => a.type == PayoutAmountRuleType.CHANGE);
+  if (change_payout_rule == null) {
+    throw new ValueError(`One change payout rule is needed to create-payout-tx`);
+  }
+  let input_items: LibauthTemplateInputAndSourceOutput[] = convertSpendableCoinsToLAInputsWithSourceOutput(input_coins);
+  const { tx_result, done } = createPayoutChainedTxSub(context, input_items, change_payout_rule, payout_rules);
+  if (!done) {
+    throw new ValueError(`Too many inputs, Tx size limit reached, Cannot generate a single transaction to perform the payout.` );
+  }
+  return tx_result;
+}
+
 
 const utxoFromPayoutResult = (txhash: Uint8Array, a: { output: Output, output_index: number }): UTXO => ({ outpoint: { txhash, index: a.output_index }, output: a.output });
 

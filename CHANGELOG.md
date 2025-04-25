@@ -2,6 +2,19 @@
 
 All notable changes of this module is documented in this file, Documenting changelog has start from version `0.0.9`.
 
+## common [1.0.2] - 2025-04-25
+
+### ADDED
+
+- `createPayoutTx` function implemented
+- `PayoutChangeRule.generateChangeLockingBytecodeForOutput`, Can be used to generate different change addresses for each output.
+- `PayoutChangeRule.allow_mixing_native_and_token_when_bch_change_is_dust`, mixes (extra) native bch with a token when the bch change is dust.
+- `PayoutChangeRule.add_change_to_txfee_when_bch_change_is_dust`, adds the dust to the txfee when the bch change is less than min allowed in an output.
+
+### CHANGED
+
+- remove Buffer implementation of `uint8ArrayEqual`
+
 ## [1.0.0] - 2025-03-22
 
 ### CHANGED

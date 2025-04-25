@@ -1,5 +1,5 @@
 import { BurnTokenException, InsufficientFunds, ValueError, InvalidProgramState } from './exceptions.js';
-import type { Output, TokenId, PayoutRule } from './types.js';
+import type { Output, TokenId, PayoutRule, PayoutChangeRule } from './types.js';
 import { PayoutAmountRuleType, NATIVE_BCH_TOKEN_ID } from './constants.js';
 
 /**
@@ -11,6 +11,10 @@ export type PayoutBuilderContext = {
   getOutputMinAmount (output: Output): bigint;
   getPreferredTokenOutputBCHAmount (output: Output): bigint | null;
   calcTxFeeWithOutputs (outputs: Output[]): bigint;
+};
+
+type PayoutBuilderContextWithInternalProperties = PayoutBuilderContext & {
+  should_allow_mixing_native_and_token_when_bch_change_is_dust?: boolean;
 };
 
 /**
@@ -38,11 +42,17 @@ export function build (context: PayoutBuilderContext, available_payouts: Array<{
   available_payouts = structuredClone(available_payouts);
   const token_burns: Array<{ token_id: TokenId, amount: bigint }> = [];
   const payout_outputs: Array<{ output: Output, payout_rule: PayoutRule }> = [];
+  if (payout_rules.filter((a) => a.type == PayoutAmountRuleType.CHANGE).length != 1) {
+    throw new ValueError(`Only one change payout_rule is required!`);
+  }
+  const change_payout_rule: PayoutChangeRule | undefined = payout_rules.find((a) => a.type == PayoutAmountRuleType.CHANGE);
+  const other_payout_rules = change_payout_rule ? payout_rules.filter((a) => a != change_payout_rule) : payout_rules;
+  /** sort by precedence (NOT NEEDED)
   const payout_type_precedence = Object.fromEntries([
     [ PayoutAmountRuleType.FIXED, 2 ],
     [ PayoutAmountRuleType.CHANGE, 1 ],
   ]);
-  const sorted_payout_rules: PayoutRule[] = Array.from(payout_rules).sort((a, b) => {
+  const sorted_payout_rules: PayoutRule[] = Array.from(other_payout_rules).sort((a, b) => {
     let bval: number = payout_type_precedence[b.type] as number;
     let aval: number = payout_type_precedence[a.type] as number;
     if (bval == null) {
@@ -53,9 +63,8 @@ export function build (context: PayoutBuilderContext, available_payouts: Array<{
     }
     return bval - aval;
   });
-  let txfee: bigint = 0n;
-  let txfee_paid = false;
-  for (const payout_rule of sorted_payout_rules) {
+  */
+  for (const payout_rule of other_payout_rules) {
     if (payout_rule.type == PayoutAmountRuleType.FIXED) {
       const output = {
         locking_bytecode: payout_rule.locking_bytecode,
@@ -108,172 +117,186 @@ export function build (context: PayoutBuilderContext, available_payouts: Array<{
       }
       bch_payout.amount -= output.amount;
       payout_outputs.push({ output, payout_rule });
-    } else if (payout_rule.type == PayoutAmountRuleType.CHANGE) {
-      let mixed_payout: { bch: { token_id: TokenId, amount: bigint }, token: { token_id: TokenId, amount: bigint } } | undefined;
-      // an initial value assigned cause, tsc emitting used before being assigned.
-      let payouts: Array<{ token_id: TokenId, amount: bigint }> = [];
-      const native_payout = available_payouts.find((a) => a.token_id == NATIVE_BCH_TOKEN_ID);
-      if (!native_payout) {
-        /* c8 ignore next */
-        throw new InvalidProgramState('native token is not in available_payouts!!')
-      }
-      if (payout_rule.allow_mixing_native_and_token) {
-        const other_tokens_payout_list = available_payouts.filter((a) => a.token_id != NATIVE_BCH_TOKEN_ID);
-        let chosen_token_idx = -1;
-        for (let i = 0; i < other_tokens_payout_list.length; ) {
-          const entry = other_tokens_payout_list[i];
-          if (entry == null) {
-            i++;
-            continue;
-          }
-          try {
-            if (typeof payout_rule.shouldBurn == 'function') {
-              payout_rule.shouldBurn(entry.token_id, entry.amount);
-            }
-            chosen_token_idx = i;
-            break;
-          } catch (err) {
-            if (err instanceof BurnTokenException) {
-              i++;
-            } else {
-              throw err;
-            }
-          }
-        }
-        if (chosen_token_idx != -1) {
-          mixed_payout = {
-            bch: native_payout,
-            // tsc does not get that value of index 0 has a value, relax the type checking
-            token: other_tokens_payout_list[chosen_token_idx] as any,
-          };
-          payouts = [ ...other_tokens_payout_list.slice(0, chosen_token_idx), ...other_tokens_payout_list.slice(chosen_token_idx + 1) ];
-        }
-      }
-      if (!mixed_payout) {
-        // place native token payout at the end
-        payouts = available_payouts.filter((a) => a.token_id != NATIVE_BCH_TOKEN_ID);
-        payouts.push(native_payout);
-      }
-      for (const payout of payouts) {
-        if (payout.amount > 0n) {
-          if (payout.token_id == NATIVE_BCH_TOKEN_ID) {
-            // if executed, this payout is the last payout
-            txfee = context.calcTxFeeWithOutputs([
-              ...payout_outputs.map((a) => a.output),
-              {
-                locking_bytecode: payout_rule.locking_bytecode,
-                amount: payout.amount,
-              },
-            ]);
-            if (!txfee_paid) {
-              if (payout.amount < txfee) {
-                const required_amount = txfee - payout.amount;
-                throw new InsufficientFunds(`Not enough change remained to pay the transaction fee, fee = ${txfee}, required amount: ${required_amount}`, { required_amount });
-              }
-              if (payout.amount > txfee) {
-                const payout_output = {
-                  locking_bytecode: payout_rule.locking_bytecode,
-                  amount: payout.amount - txfee,
-                };
-                const min_amount = context.getOutputMinAmount(payout_output);
-                if (payout_output.amount - txfee < min_amount) {
-                  const required_amount = min_amount - (payout_output.amount - txfee);
-                  throw new InsufficientFunds(`Not enough satoshis left to have the min amount in a (change) output, min: ${min_amount}, txfee: ${txfee}, required amount: ${required_amount}`, { required_amount });
-                }
-                payout_outputs.push({ output: payout_output, payout_rule });
-              }
-            } else {
-              const payout_output = {
-                locking_bytecode: payout_rule.locking_bytecode,
-                amount: payout.amount,
-              };
-              const min_amount = context.getOutputMinAmount(payout_output);
-              if (payout_output.amount < min_amount) {
-                const required_amount = min_amount - payout_output.amount;
-                throw new InsufficientFunds(`Not enough satoshis left to have the min amount in a (change) output, min: ${min_amount}, required amount: ${required_amount}`, { required_amount });
-              }
-              payout_outputs.push({ output: payout_output, payout_rule });
-            }
-            txfee_paid = true;
-          } else {
-            try {
-              if (typeof payout_rule.shouldBurn == 'function') {
-                payout_rule.shouldBurn(payout.token_id, payout.amount);
-              }
-              const output = {
-                locking_bytecode: payout_rule.locking_bytecode,
-                token: {
-                  amount: payout.amount,
-                  token_id: payout.token_id,
-                },
-                amount: 0n,
-              }
-              let utxo_bch_amount: bigint | null =  context.getPreferredTokenOutputBCHAmount(output);
-              if (utxo_bch_amount == null || native_payout.amount < utxo_bch_amount) {
-                utxo_bch_amount = context.getOutputMinAmount(output);
-              }
-              if (native_payout.amount < utxo_bch_amount) {
-                const required_amount = utxo_bch_amount - native_payout.amount;
-                throw new InsufficientFunds(`Not enough satoshis left to allocate min bch amount in a token (change) output, required amount: ${required_amount}`, { required_amount });
-              }
-              output.amount = utxo_bch_amount;
-              payout_outputs.push({ output, payout_rule });
-              native_payout.amount -= output.amount;
-            } catch (err) {
-              if (err instanceof BurnTokenException) {
-                token_burns.push({ token_id: payout.token_id, amount: payout.amount });
-              } else {
-                throw err;
-              }
-            }
-          }
-          payout.amount = 0n;
-        }
-      }
-      if (mixed_payout) {
-        // if executed, this payout is the last payout
-        txfee = context.calcTxFeeWithOutputs([
-          ...payout_outputs.map((a) => a.output),
-          {
-            locking_bytecode: payout_rule.locking_bytecode,
-            token: {
-              amount: mixed_payout.token.amount,
-              token_id: mixed_payout.token.token_id,
-            },
-            amount: mixed_payout.bch.amount,
-          },
-        ]);
-        if (!txfee_paid && mixed_payout.bch.amount < txfee) {
-          const required_amount = txfee - mixed_payout.bch.amount;
-          throw new InsufficientFunds(`Not enough change remained to pay the tx fee, fee = ${txfee}, required amount: ${required_amount}`, { required_amount });
-        }
-        const payout_output = {
-          locking_bytecode: payout_rule.locking_bytecode,
-          token: {
-            amount: mixed_payout.token.amount,
-            token_id: mixed_payout.token.token_id,
-          },
-          amount: mixed_payout.bch.amount - txfee,
-        };
-        const min_amount = context.getOutputMinAmount(payout_output);
-        if (payout_output.amount - txfee < min_amount) {
-          const required_amount = min_amount - payout_output.amount;
-          throw new InsufficientFunds(`Not enough satoshis left to have the min amount in a mixed (change) output, min: ${min_amount}, required amount: ${required_amount}`, { required_amount });
-        }
-        txfee_paid = true;
-        payout_outputs.push({ output: payout_output, payout_rule });
-        mixed_payout.bch.amount = 0n;
-        mixed_payout.token.amount = 0n;
-      }
     } else {
       const payout_rule_type = (payout_rule as any).type;
       throw new ValueError(`Invalid payout_rule.type: ${payout_rule_type}`)
     }
   }
+  let txfee: bigint = 0n;
+  if (change_payout_rule != null) {
+    const generateChangeLockingBytecode = (output: Output): Uint8Array => {
+      if ((!(change_payout_rule.locking_bytecode instanceof Uint8Array) ||
+           change_payout_rule.locking_bytecode.length == 0) &&
+          typeof change_payout_rule.generateChangeLockingBytecodeForOutput != 'function') {
+        throw new ValueError(`change payout rule needs to define locking_bytecode or generateChangeLockingBytecodeForOutput`);
+      }
+      if (typeof change_payout_rule.generateChangeLockingBytecodeForOutput == 'function') {
+        const bytecode = change_payout_rule.generateChangeLockingBytecodeForOutput(output);
+        if (!(bytecode instanceof Uint8Array) || bytecode.length == 0) {
+          throw new ValueError(`The returned value from generateChangeLockingBytecodeForOutput is expected to be non-empty Uint8Array!`);
+        }
+        return bytecode;
+      }
+      return change_payout_rule.locking_bytecode;
+    };
+    let mixed_payout: { bch: { token_id: TokenId, amount: bigint }, token: { token_id: TokenId, amount: bigint } } | undefined;
+    // an initial value assigned cause, tsc emitting used before being assigned.
+    let payouts: Array<{ token_id: TokenId, amount: bigint }> = [];
+    const native_payout = available_payouts.find((a) => a.token_id == NATIVE_BCH_TOKEN_ID);
+    if (!native_payout) {
+      /* c8 ignore next */
+      throw new InvalidProgramState('native token is not in available_payouts!!')
+    }
+    if (change_payout_rule.allow_mixing_native_and_token ||
+      (change_payout_rule.allow_mixing_native_and_token_when_bch_change_is_dust &&
+        (context as PayoutBuilderContextWithInternalProperties).should_allow_mixing_native_and_token_when_bch_change_is_dust)) {
+      const other_tokens_payout_list = available_payouts.filter((a) => a.token_id != NATIVE_BCH_TOKEN_ID);
+      let chosen_token_idx = -1;
+      for (let i = 0; i < other_tokens_payout_list.length; ) {
+        const entry = other_tokens_payout_list[i];
+        if (entry == null) {
+          i++;
+          continue;
+        }
+        try {
+          if (typeof change_payout_rule.shouldBurn == 'function') {
+            change_payout_rule.shouldBurn(entry.token_id, entry.amount);
+          }
+          chosen_token_idx = i;
+          break;
+        } catch (err) {
+          if (err instanceof BurnTokenException) {
+            i++;
+          } else {
+            throw err;
+          }
+        }
+      }
+      if (chosen_token_idx != -1) {
+        mixed_payout = {
+          bch: native_payout,
+          // tsc does not get that value of index 0 has a value, relax the type checking
+          token: other_tokens_payout_list[chosen_token_idx] as any,
+        };
+        payouts = [ ...other_tokens_payout_list.slice(0, chosen_token_idx), ...other_tokens_payout_list.slice(chosen_token_idx + 1) ];
+      }
+    }
+    if (!mixed_payout) {
+      // place native token payout at the end
+      payouts = available_payouts.filter((a) => a.token_id != NATIVE_BCH_TOKEN_ID);
+    }
+    for (const payout of payouts) {
+      if (payout.amount > 0n) {
+        if (payout.token_id == NATIVE_BCH_TOKEN_ID) {
+          throw new InvalidProgramState('payout.token_id == NATIVE_BCH_TOKEN_ID!!!');
+        }
+        try {
+          if (typeof change_payout_rule.shouldBurn == 'function') {
+            change_payout_rule.shouldBurn(payout.token_id, payout.amount);
+          }
+          const output = {
+            locking_bytecode: undefined as any,
+            token: {
+              amount: payout.amount,
+              token_id: payout.token_id,
+            },
+            amount: 0n,
+          };
+          output.locking_bytecode = generateChangeLockingBytecode(output);
+          let utxo_bch_amount: bigint | null =  context.getPreferredTokenOutputBCHAmount(output);
+          if (utxo_bch_amount == null || native_payout.amount < utxo_bch_amount) {
+            utxo_bch_amount = context.getOutputMinAmount(output);
+          }
+          if (native_payout.amount < utxo_bch_amount) {
+            const required_amount = utxo_bch_amount - native_payout.amount;
+            throw new InsufficientFunds(`Not enough satoshis left to allocate min bch amount in a token (change) output, required amount: ${required_amount}`, { required_amount });
+          }
+          output.amount = utxo_bch_amount;
+          payout_outputs.push({ output, payout_rule: change_payout_rule });
+          native_payout.amount -= output.amount;
+          payout.amount = 0n;
+        } catch (err) {
+          if (err instanceof BurnTokenException) {
+            token_burns.push({ token_id: payout.token_id, amount: payout.amount });
+          } else {
+            throw err;
+          }
+        }
+      }
+    }
+    // add the last change & pay the txfee
+    if (mixed_payout != null) {
+      // mixed change payout
+      const payout_output = {
+        locking_bytecode: undefined as any,
+        token: {
+          amount: mixed_payout.token.amount,
+          token_id: mixed_payout.token.token_id,
+        },
+        amount: mixed_payout.bch.amount,
+      };
+      payout_output.locking_bytecode = generateChangeLockingBytecode(payout_output);
+      txfee = context.calcTxFeeWithOutputs([
+        ...payout_outputs.map((a) => a.output),
+        payout_output,
+      ]);
+      if (mixed_payout.bch.amount < txfee) {
+        const required_amount = txfee - mixed_payout.bch.amount;
+        throw new InsufficientFunds(`Not enough change remained to pay the tx fee, fee = ${txfee}, required amount: ${required_amount}`, { required_amount });
+      }
+      payout_output.amount = mixed_payout.bch.amount - txfee;
+      const min_amount = context.getOutputMinAmount(payout_output);
+      if (payout_output.amount - txfee < min_amount) {
+        const required_amount = min_amount - payout_output.amount;
+        throw new InsufficientFunds(`Not enough satoshis left to have the min amount in a mixed (change) output, min: ${min_amount}, required amount: ${required_amount}`, { required_amount });
+      }
+      payout_outputs.push({ output: payout_output, payout_rule: change_payout_rule });
+      mixed_payout.bch.amount -= payout_output.amount;
+      mixed_payout.token.amount = 0n;
+    } else {
+      // native change payout
+      const payout_output = {
+        locking_bytecode: undefined as any,
+        amount: native_payout.amount,
+      };
+      payout_output.locking_bytecode = generateChangeLockingBytecode(payout_output);
+      txfee = context.calcTxFeeWithOutputs([
+        ...payout_outputs.map((a) => a.output),
+        payout_output,
+      ]);
+      if (native_payout.amount < txfee) {
+        const required_amount = txfee - native_payout.amount;
+        throw new InsufficientFunds(`Not enough change remained to pay the transaction fee, fee = ${txfee}, required amount: ${required_amount}`, { required_amount });
+      }
+      if (native_payout.amount > txfee) {
+        payout_output.amount = native_payout.amount - txfee;
+        const min_amount = context.getOutputMinAmount(payout_output);
+        if (payout_output.amount - txfee < min_amount) {
+          if (!change_payout_rule.allow_mixing_native_and_token &&
+              change_payout_rule.allow_mixing_native_and_token_when_bch_change_is_dust &&
+              !(context as PayoutBuilderContextWithInternalProperties).should_allow_mixing_native_and_token_when_bch_change_is_dust) {
+            // re-build with allow mixing
+            return build({
+              ...context,
+              should_allow_mixing_native_and_token_when_bch_change_is_dust: true,
+            } as PayoutBuilderContext, available_payouts, payout_rules, verify_all_payouts_are_paid);
+          } else if (change_payout_rule.add_change_to_txfee_when_bch_change_is_dust) {
+            txfee = native_payout.amount;
+          } else {
+            const required_amount = min_amount - (payout_output.amount - txfee);
+            throw new InsufficientFunds(`Not enough satoshis left to have the min amount in a (change) output, min: ${min_amount}, txfee: ${txfee}, required amount: ${required_amount}`, { required_amount });
+          }
+        } else {
+          payout_outputs.push({ output: payout_output, payout_rule: change_payout_rule });
+          native_payout.amount -= payout_output.amount;
+        }
+      }
+    }
+  }
   // verify nothing has left in the available_payouts
   if (verify_all_payouts_are_paid) {
     for (const available_payout of available_payouts) {
-      if (available_payout.token_id == NATIVE_BCH_TOKEN_ID && !txfee_paid &&
+      if (available_payout.token_id == NATIVE_BCH_TOKEN_ID &&
           available_payout.amount <= txfee) {
         // exclude from the check if the txfee is not paid and the left out payout is lower than or equal to txfee
         continue;

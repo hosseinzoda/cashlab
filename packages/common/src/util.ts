@@ -113,9 +113,7 @@ export const uint8ArrayConcat = (items: Uint8Array[]): Uint8Array => {
   return result;
 };
 
-export const uint8ArrayEqual = typeof Buffer != 'undefined' ?
-  (a: Uint8Array, b: Uint8Array): boolean => (a instanceof Buffer ? a : Buffer.from(a)).equals(b) :
-  (a: Uint8Array, b: Uint8Array): boolean => {
+export const uint8ArrayEqual = (a: Uint8Array, b: Uint8Array): boolean => {
     if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array)) {
       return false;
     }

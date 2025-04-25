@@ -151,10 +151,26 @@ export type PayoutFixedAmountRule = PayoutRuleCommon & {
 export type PayoutChangeRule = PayoutRuleCommon & {
   type: PayoutAmountRuleType.CHANGE;
   /**
+   * The value defines the locking_bytecode of the generated outputs. (optional)
+   */
+  locking_bytecode?: Uint8Array;
+  /**
+   * Generate a locking_bytecode for a change output.
+   */
+  generateChangeLockingBytecodeForOutput?: (output: Output) => Uint8Array;
+  /**
    * When true the change output may contain the remaining bch & tokens in a single output.
    * Warning: Not all wallets know how to get access to mixed outputs, Set this to true only if you know what you're doing.
    */
   allow_mixing_native_and_token?: boolean;
+  /**
+   * When true the bch change output will be mixed by a token output if bch change is considered as dust output.
+   */
+  allow_mixing_native_and_token_when_bch_change_is_dust?: boolean;
+  /**
+   * When true if the bch change is considered as dust it will be added to the transaction fee.
+   */
+  add_change_to_txfee_when_bch_change_is_dust?: boolean;
   /**
    * The command method to burn the change for a token when it throws {@link BurnTokenException}
    * @param token_id The id of the change token.
