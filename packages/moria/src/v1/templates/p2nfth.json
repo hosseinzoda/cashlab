@@ -1,0 +1,46 @@
+{
+  "$schema": "https://ide.bitauth.com/authentication-template-v0.schema.json",
+  "description": "Pay to nft-hash contract (used in MoriaV1)",
+  "name": "p2nfth",
+  "entities": {
+    "main": {
+      "description": "",
+      "name": "main",
+      "scripts": [
+        "__main__", "unlock"
+      ],
+      "variables": {
+        "nfthash": {
+          "description": "The permitted nfthash to unlock the value in the utxo. hash256(token_category + token_commitment)",
+          "name": "nfthash",
+          "type": "AddressData"
+        },
+        "nft_index": {
+          "description": "The input index to use for unlocking the value.",
+          "name": "nft_index",
+          "type": "AddressData"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "unlock": {
+      "name": "Update the oracle data",
+      "script": "<nft_index> // the nft's input index\n// has no abi, only contains one function",
+      "unlocks": "__main__"
+    },
+    "__main__": {
+      "lockingType": "p2sh32",
+      "name": "p2nfth locking script",
+      "script": "<nfthash> __main_script__"
+    },
+    "__main_script__": {
+      "name": "p2nfth redeem script",
+      "script": "0x78ce7bcf7eaa87"
+    }
+  },
+  "supported": [
+    "BCH_2025_05"
+  ],
+  "version": 0
+}

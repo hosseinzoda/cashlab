@@ -2,6 +2,7 @@ import type {
   MoriaTxResult, MintTxResult, RedeemTxResult, AddCollateralTxResult,
   RefinanceLoanResult, CompilerContext,
   LoanNFTParameters, OracleNFTParameters,
+  MoriaV0Constants,
 } from './types.js';
 import type {
   TxResult, TokenId, UTXOWithNFT, Output, SpendableCoin, PayoutRule, Fraction,
@@ -18,12 +19,6 @@ import moriav0_template_data from './moria-v0-template.json' with { type: "json"
 import d3lphi_oracle_template_data from './d3lphi-oracle-template.json' with { type: "json" };
 
 export * from './types.js';
-export type MoriaV0Constants = {
-  musd_token_id: TokenId;
-  oracle_token_id: TokenId;
-  sunset_pubkey: Uint8Array;
-  sunset_message: Uint8Array;
-};
 
 const makeWalletDataOperation = (getPredefinedData: () => any) => {
   return libauth.compilerOperationRequires({

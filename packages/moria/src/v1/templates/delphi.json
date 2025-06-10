@@ -1,0 +1,56 @@
+{
+  "$schema": "https://ide.bitauth.com/authentication-template-v0.schema.json",
+  "description": "Delphi contract (used in MoriaV1)",
+  "name": "delphi",
+  "entities": {
+    "main": {
+      "description": "",
+      "name": "main",
+      "scripts": [
+        "__main__", "update", "use", "withdraw_bch"
+      ],
+      "variables": {
+        "update_token_category": {
+          "description": "Permitted token id to unlock the update script. (reversed)",
+          "name": "update_token_category",
+          "type": "WalletData"
+        },
+        "withdraw_token_category": {
+          "description": "Permitted token id to unlock the withdraw_bch script. (reversed)",
+          "name": "withdraw_token_category",
+          "type": "WalletData"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "update": {
+      "name": "Update the oracle data",
+      "script": "<0> // update abi index",
+      "unlocks": "__main__"
+    },
+    "use": {
+      "name": "Use the oracle in a transaction",
+      "script": "<1> // use abi index",
+      "unlocks": "__main__"
+    },
+    "withdraw_bch": {
+      "name": "Withdraw the bch value from the input",
+      "script": "<2> // withdrawBCH abi index",
+      "unlocks": "__main__"
+    },
+    "__main__": {
+      "lockingType": "p2sh32",
+      "name": "Delphi locking script",
+      "script": "<withdraw_token_category> <update_token_category> __main_script__"
+    },
+    "__main_script__": {
+      "name": "Delphi redeem script",
+      "script": "0x5279009c6300ce01207f7588c0d276827760a269c0cf78587f77547f758178587f77547f7581a0697c567f75817c567f7581a069c0ccc0c6a269c0cdc0c788c0d1c0ce877777675279519c63c0cf567f77527f7581c0ccc0c67b93a269c0cdc0c788c0d1c0ce88c0d2c0cf87777777677b529d00ce01207f757b88c0cdc0c788c0d1c0ce88c0d2c0cf87776868"
+    }
+  },
+  "supported": [
+    "BCH_2025_05"
+  ],
+  "version": 0
+}

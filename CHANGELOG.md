@@ -2,6 +2,21 @@
 
 All notable changes of this module is documented in this file, Documenting changelog has start from version `0.0.9`.
 
+
+## common [1.0.3] & moria [1.1.0] - 2025-06-10
+
+### ADDED
+
+- Improved transaction generation with the help of libauth & input unlockers
+- `SpendableCoinType.ON_DEMAND_UNLOCKER`, Ability to build custom unlocking bytecode for inputs. The unlock method allows `SpendableCoin` to contain utxos with custom scripts.
+- Integrating MoriaV1 to `@cashlab/moria` package. Containing tools to generate moria transactions, read/write moria outputs, withdraw p2nfth utxos +more.
+
+
+### CHANGED
+
+- Bumped `@bitauth/libauth` dependency version to 3.1.0-next.6
+
+
 ## common [1.0.2] - 2025-04-25
 
 ### ADDED

@@ -29,7 +29,7 @@ test('moria-v0-reduce-loan', (t) => {
   const reduce_input_coins: SpendableCoin[] = [
     // exclude loan token payout
     ...mint_result.payouts.filter((a) => a.output.token?.token_id != musd_token_id).map((utxo) => ({
-      type: SpendableCoinType.P2PKH,
+      type: SpendableCoinType.P2PKH as SpendableCoinType.P2PKH,
       key: sb.PRIVATE_KEY,
       ...utxo,
     })),

@@ -39,8 +39,8 @@ importers:
   packages/common:
     dependencies:
       '@bitauth/libauth':
-        specifier: ^3.0.0
-        version: 3.0.0
+        specifier: 3.1.0-next.6
+        version: 3.1.0-next.6
     devDependencies:
       '@types/node':
         specifier: ^20.14.10
@@ -62,8 +62,8 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@bitauth/libauth@3.0.0':
-    resolution: {integrity: sha512-3yoL31XpnhAnf5nDVMFk4xPqebxDwXrgYAwpa31ARJnV5A/eXWlpNYvCd6FTZPFM4VvKfjCBi+jRCrw1hOZ0Jg==}
+  '@bitauth/libauth@3.1.0-next.6':
+    resolution: {integrity: sha512-FJ4ZChczVx779T6yElNGV1pWuyN4+mwF7P6ro+eFt5g6GPKqJe4S7YYBJySRGyER2CvTVnmx0gArzSbp/2u3oA==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
   '@gerrit0/mini-shiki@3.2.1':
@@ -924,7 +924,7 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@bitauth/libauth@3.0.0': {}
+  '@bitauth/libauth@3.1.0-next.6': {}
 
   '@gerrit0/mini-shiki@3.2.1':
     dependencies:

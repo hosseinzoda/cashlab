@@ -1,4 +1,7 @@
-import type { Transaction as libauthTransaction, Output as libauthOutput } from './libauth.js';
+import type {
+  Transaction as libauthTransaction, Output as libauthOutput,
+  CompilerBCH as libauthCompilerBCH, CompilationData as libauthCompilationData
+} from './libauth.js';
 
 export type NativeBCHTokenId = 'BCH';
 
@@ -21,19 +24,30 @@ export enum NonFungibleTokenCapability {
   minting = 'minting',
 };
 
+export type OutputFungibleTokenComponent = {
+  amount: bigint;
+  token_id: string;
+};
+
+export type OutputNFTComponent = {
+  capability: `${NonFungibleTokenCapability}`;
+  commitment: Uint8Array;
+}
+
+export type OutputTokenComponent = OutputFungibleTokenComponent & {
+  nft?: OutputNFTComponent;
+};
+
+export type OutputTokenComponentWithNFT = OutputFungibleTokenComponent & {
+  nft: OutputNFTComponent;
+};
+
 /**
  * BCH transaction output.
  */
 export type Output = {
   locking_bytecode: Uint8Array;
-  token?: {
-    amount: bigint;
-    token_id: string;
-    nft?: {
-      capability: `${NonFungibleTokenCapability}`;
-      commitment: Uint8Array;
-    };
-  };
+  token?: OutputTokenComponent;
   amount: bigint;
 };
 
@@ -41,28 +55,19 @@ export type Output = {
  * BCH transaction output with a fungible token.
  */
 export type OutputWithFT = Output & {
-  token: {
-    amount: bigint;
-    token_id: string;
-  };
+  token: OutputFungibleTokenComponent;
 };
 
 /**
  * BCH transaction output with a non-fungible token.
  */
 export type OutputWithNFT = Output & {
-  token: {
-    amount: bigint;
-    token_id: string;
-    nft: {
-      capability: `${NonFungibleTokenCapability}`;
-      commitment: Uint8Array;
-    };
-  };
+  token: OutputTokenComponentWithNFT;
 };
 
 export enum SpendableCoinType {
   P2PKH = 'P2PKH',
+  UNLOCK_ON_DEMAND = 'UNLOCK_ON_DEMAND',
 };
 
 
@@ -92,6 +97,33 @@ export type UTXOWithNFT = UTXO<OutputWithNFT>;
  */
 export type UTXOWithFT = UTXO<OutputWithFT>;
 
+export type InputParams<OutputType> = {
+  utxo: UTXO<OutputType>;
+  sequence_number: number;
+};
+
+export enum InputUnlockerType {
+  LIBAUTH_UNLOCKER = 'LIBAUTH_UNLOCKER',
+  ON_DEMAND_UNLOCKER = 'ON_DEMAND_UNLOCKER',
+};
+
+export type InputParamsWithLibAuthUnlocker<OutputType, CompilerType = libauthCompilerBCH, CompilationDataType = libauthCompilationData<never>> = InputParams<OutputType> & {
+  unlocker_type: InputUnlockerType.LIBAUTH_UNLOCKER;
+  getUnlockBytecodeCompilationDirective (input_index: number, input: InputParams<OutputType>, inputs: InputParams<Output>[], outputs: Output[], txparams: { locktime: number, version: number }): {
+    compiler: CompilerType;
+    data?: CompilationDataType;
+    script: string;
+  };
+};
+
+export type InputParamsWithOnDemandUnlocker<OutputType> = InputParams<OutputType> & {
+  unlocker_type: InputUnlockerType.ON_DEMAND_UNLOCKER;
+  unlock (input_index: number, input: InputParams<OutputType>, inputs: InputParams<Output>[], outputs: Output[], txparams: { locktime: number, version: number }): Uint8Array;
+};
+export type InputParamsWithUnlocker<OutputType = Output> =
+  | InputParamsWithOnDemandUnlocker<OutputType>
+  | InputParamsWithLibAuthUnlocker<OutputType>;
+
 /**
  * A data type with the information needed to spend a pay-to-public-key-hash outputs.
  */
@@ -100,11 +132,17 @@ export type SpendableCoinP2PKH<OutputType> = UTXO<OutputType> & {
   key: Uint8Array;
 };
 
+export type SpendableCoinUnlockOnDemand<OutputType> = UTXO<OutputType> & {
+  type: SpendableCoinType.UNLOCK_ON_DEMAND;
+  unlock (input_index: number, input: InputParams<OutputType>, inputs: InputParams<Output>[], outputs: Output[], txparams: { locktime: number, version: number }): Uint8Array;
+};
+
 /**
  * A data type containing information needed to spend an output.
  */
 export type SpendableCoin<OutputType = Output> =
-  | SpendableCoinP2PKH<OutputType>;
+  | SpendableCoinP2PKH<OutputType>
+  | SpendableCoinUnlockOnDemand<OutputType>;
 
 /**
  * Types of payout amount rule

@@ -59,3 +59,10 @@ export type OracleNFTParameters = {
     data_sequence: number;
   },
 };
+
+export type MoriaV0Constants = {
+  musd_token_id: TokenId;
+  oracle_token_id: TokenId;
+  sunset_pubkey: Uint8Array;
+  sunset_message: Uint8Array;
+};

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://ide.bitauth.com/authentication-template-v0.schema.json",
+  "description": "BatonMinter contract (used in MoriaV1)",
+  "name": "BatonMinter",
+  "entities": {
+    "main": {
+      "description": "",
+      "name": "main",
+      "scripts": [
+        "__main__", "mint", "withdraw_bch"
+      ],
+      "variables": {
+        "withdraw_token_category": {
+          "description": "Permitted token id to unlock the withdraw_bch script. (reversed)",
+          "name": "withdraw_token_category",
+          "type": "WalletData"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "mint": {
+      "name": "Mint a baton nft",
+      "script": "<0> // mint abi index",
+      "unlocks": "__main__"
+    },
+    "withdraw_bch": {
+      "name": "Withdraw the bch value from the input",
+      "script": "<1> // withdrawBCH abi index",
+      "unlocks": "__main__"
+    },
+    "__main__": {
+      "lockingType": "p2sh32",
+      "name": "BatonMinter locking script",
+      "script": "<withdraw_token_category> __main_script__"
+    },
+    "__main_script__": {
+      "name": "BatonMinter redeem script",
+      "script": "0x78009c63c0539d02e80353cf81768b55ccc0c6547a93a26955cdc0c78855d1c0ce8855d28853ce01207f7556d1788856d27b8800d100876400d101207f75788791696851d100876451d101207f75788791696852d100876452d101207f75788791696853d100876453d101207f75788791696854d100876454d101207f757887916968c4579c777777677c519d00ce01207f757888c0519d00d18851cd51c78851d151ce8851d251cf8852d10088c4539c68"
+    }
+  },
+  "supported": [
+    "BCH_2025_05"
+  ],
+  "version": 0
+}

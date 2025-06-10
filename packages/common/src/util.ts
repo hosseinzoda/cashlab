@@ -1,8 +1,10 @@
-import type { Fraction, TokenId, Output } from './types.js';
-import { NATIVE_BCH_TOKEN_ID } from './constants.js';
+import type {
+  Fraction, TokenId, Output,
+  InputParamsWithUnlocker, InputParams,
+} from './types.js';
+import { NATIVE_BCH_TOKEN_ID, InputUnlockerType } from './constants.js';
 import { ValueError } from './exceptions.js';
 import type * as libauth from './libauth.js';
-
 //
 // binToHex & hexToBin are copied from @bitauth/libauth package
 //
@@ -215,4 +217,75 @@ export const outputToLibauthOutput = (output: Output): libauth.Output => {
       } : undefined,
     } : undefined,
   };
+};
+
+export const inputParamsWithUnlockerToLibauthInputTemplate = (input_index: number, input: InputParamsWithUnlocker, inputs: InputParams<Output>[], outputs: Output[], txparams: { locktime: number, version: number }): libauth.InputTemplate<libauth.CompilerBCH, false, libauth.CompilationData<never>> => {
+  let la_unlocking_bytecode: libauth.CompilationDirectiveUnlocking<libauth.CompilerBCH, libauth.CompilationData<never>> | Uint8Array;
+  if (input.unlocker_type == InputUnlockerType.LIBAUTH_UNLOCKER) {
+    la_unlocking_bytecode = {
+      ...input.getUnlockBytecodeCompilationDirective(input_index, input, inputs, outputs, txparams),
+      valueSatoshis: input.utxo.output.amount,
+      token: input.utxo.output.token == null ? undefined : {
+        amount: input.utxo.output.token.amount,
+        category: convertTokenIdToUint8Array(input.utxo.output.token.token_id),
+        nft: input.utxo.output.token.nft == null ? undefined : {
+          capability: input.utxo.output.token.nft.capability,
+          commitment: input.utxo.output.token.nft.commitment,
+        },
+      },
+    };
+  } else if (input.unlocker_type == InputUnlockerType.ON_DEMAND_UNLOCKER) {
+    la_unlocking_bytecode = input.unlock(input_index, input, inputs, outputs, txparams);
+  } else {
+    throw new ValueError(`Unkown unlocker_type ${(input as any).unlocker_type}`);
+  }
+  return {
+    outpointIndex: input.utxo.outpoint.index,
+    outpointTransactionHash: input.utxo.outpoint.txhash,
+    sequenceNumber: input.sequence_number,
+    unlockingBytecode: la_unlocking_bytecode,
+  };
+};
+
+export const calcAvailablePayoutFromIO = (inputs: Array<{ utxo: { output: Output } }>, outputs: Output[]): Array<{ token_id: TokenId, amount: bigint }> => {
+  const bch_available_payout = { token_id: NATIVE_BCH_TOKEN_ID, amount: 0n };
+  const available_payouts: Array<{ token_id: TokenId, amount: bigint }> = [ bch_available_payout ];
+  // add inputs
+  for (const input of inputs) {
+    bch_available_payout.amount += input.utxo.output.amount;
+    if (input.utxo.output.token && input.utxo.output.token.amount > 0n) {
+      const token_id: TokenId = input.utxo.output.token.token_id;
+      let available_payout = available_payouts.find((a) => a.token_id == token_id);
+      if (available_payout == null) {
+        available_payout = { token_id, amount: 0n };
+        available_payouts.push(available_payout);
+      }
+      available_payout.amount += input.utxo.output.token.amount;
+    }
+  }
+  // deduct outputs
+  for (const output of outputs) {
+    bch_available_payout.amount -= output.amount;
+    if (output.token && output.token.amount > 0n) {
+      const token_id: TokenId = output.token.token_id;
+      let available_payout = available_payouts.find((a) => a.token_id == token_id);
+      if (available_payout == null) {
+        available_payout = { token_id, amount: 0n };
+        available_payouts.push(available_payout);
+      }
+      available_payout.amount -= output.token.amount;
+    }
+  }
+  return available_payouts;
+};
+
+// @ts-ignore
+export const simpleJsonSerializer = (name: string, value: any) => {
+  if (typeof value == 'bigint') {
+    return value+'';
+  } else if (value instanceof Uint8Array) {
+    return binToHex(value);
+  } else {
+    return value;
+  }
 };

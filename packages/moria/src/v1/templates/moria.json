@@ -1,0 +1,111 @@
+{
+  "$schema": "https://ide.bitauth.com/authentication-template-v0.schema.json",
+  "description": "MoriaV1 contracts, Contains two contracts, Moria & TokenLoan",
+  "name": "moria",
+  "entities": {
+    "main": {
+      "description": "",
+      "name": "main",
+      "scripts": [
+        "moria", "moria_repay_loan", "moria_update", "moria_borrow", "moria_refinance_loan",
+        "loan", "loan_peek", "loan_add_collateral", "loan_repay", "loan_redeem", "loan_refinance"
+      ],
+      "variables": {
+        "delphi_token_category": {
+          "description": "Oracle's token id. (reversed)",
+          "name": "delphi_token_category",
+          "type": "WalletData"
+        },
+        "peek_token_category": {
+          "description": "peek token id. (reversed)",
+          "name": "peek_token_category",
+          "type": "WalletData"
+        },
+        "bporacle_token_category": {
+          "description": "bporacle token id. (reversed)",
+          "name": "bporacle_token_category",
+          "type": "WalletData"
+        },
+        "p2nft_bytecode": {
+          "description": "p2nft script bytecode.",
+          "name": "p2nft_bytecode",
+          "type": "WalletData"
+        },
+        "interest_locking_bytecode": {
+          "description": "interest locking bytecode.",
+          "name": "interest_locking_bytecode",
+          "type": "WalletData"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "moria_repay_loan": {
+      "name": "Moria's unlock to repay a loan",
+      "script": "<0> // repayLoan abi index",
+      "unlocks": "moria"
+    },
+    "moria_update": {
+      "name": "Update Moria's sequence number",
+      "script": "<1> // update abi index",
+      "unlocks": "moria"
+    },
+    "moria_borrow": {
+      "name": "Mint a loan with Moria.",
+      "script": "<2> // borrow abi index",
+      "unlocks": "moria"
+    },
+    "moria_refinance_loan": {
+      "name": "Moria's unlock to refinance a loan.",
+      "script": "<3> // refinanceLoan abi index",
+      "unlocks": "moria"
+    },
+    "moria": {
+      "lockingType": "p2sh32",
+      "name": "Moria locking script",
+      "script": "<OP_HASH256 <$(<loan> OP_HASH256)> OP_EQUAL> <$(<delphi_token_category> <0x01> OP_CAT)> moria_script"
+    },
+    "moria_script": {
+      "name": "Moria redeem script",
+      "script": "0x5279009c63c0009d51ce7888c0ce01207f7552cf52ce5279887682770114a26951cf00cf8178587f77547f7581767ba2697c567f7581527901247f7781a2697c01207f77527f75810164957602e803a26900d0937c00cd00c78800d100ce8800d37ba26900cc02e8039d00d28851d17b8852d1788852d2008853d100876453d101207f75788791696854d1008855d1008755d17b879b6955d20088c4569c7777675279519c63c0009d51ce788852ce0088c3539d51cf00cf817c587f77547f7581767ba06900cd00c78800d100ce8800d300d0a26900cc02e8039d00d28851d18852d10088c4539c7777675279529c63c0009d51ce788852ce008851cf00cf8178587f77547f7581767ba269785c7f77547f75817600a06952cc529553967c950400e1f5059653d3767ba1697602e803a269760370e531a1697c00d052799400cd00c78800d100ce8800d3a16900cc02e8039d00d28851d1537a8800ce01207f7552d1788852d3009d52cd547a8852d27b7801207f77527f75810164959d7b567f75817801247f77819d01227f77527f75817600a26902bc7fa16953cc02e8039d53d1788853d2008854d1008855d100876455d101207f75788791696856d100876456d101207f757887916968c4579c7777677b539dc0009d51ce7888c0ce01207f7552cf52ce5279887682770114a26951cf00cf8178587f77547f7581767ba269785c7f77547f75817600a0695279567f7581547901247f7781a269537a01207f77527f75810164957602e803a2697b00cd00c78800d100ce8800cc02e8039d00d28851d1557a8852d154798852d3009d52cd557a8852d2537a567f75817801247f77819d7601227f77527f75817600a26902bc7fa16953d200876453d154798791696854d200876454d154798791696855d200876455d154798791696856d200876456d1547987916968c4579d52cc52955396537a950400e1f505967c01207f77527f7581016495767ba1697602e803a269760370e531a16900d000d39476900370e531a1697c7b7b939c77686868"
+    },
+    "loan_peek": {
+      "name": "Loan peek method",
+      "script": "<0> // peek abi index",
+      "unlocks": "loan"
+    },
+    "loan_add_collateral": {
+      "name": "Add collateral to the loan",
+      "script": "<1> // addCollateral abi index",
+      "unlocks": "loan"
+    },
+    "loan_repay": {
+      "name": "Repay a loan",
+      "script": "<2> // repayLoan abi index",
+      "unlocks": "loan"
+    },
+    "loan_redeem": {
+      "name": "Redeem a loan",
+      "script": "<3> // redeem abi index",
+      "unlocks": "loan"
+    },
+    "loan_refinance": {
+      "name": "Refinance a loan",
+      "script": "<4> // refinanceLoan abi index",
+      "unlocks": "loan"
+    },
+    "loan": {
+      "lockingType": "p2sh32",
+      "name": "TokenLoan locking script",
+      "script": "<peek_token_category> <$(<bporacle_token_category> <0x01> OP_CAT)> <p2nft_bytecode> <interest_locking_bytecode> loan_script"
+    },
+    "loan_script": {
+      "name": "TokenLoan redeem script",
+      "script": "0x5479009c63c0519d00ce54798851cc51c6a26951cd51c78851d151ce8851d251cf8851d351d09d00d1547a886d6d51675479519c63c0519d51cf01207f7500ce00cf7eaa8851cc51c603a0860193a26951cd51c78851d151ce8851d251cf8851d351d09d6d6d7551675479529c6352ce76527e00ce8852c09d51cf52cf78567f75817801247f77816ea269527901207f77527f75810164957602e803a269537901227f77527f75817600a2695152797b95547a547a9403805101938c038051019695021027026d019596937c7893537a5c7f77547f75817600a06952c65a955c967c950400e1f50596a1637801207f7553ce53cf7eaa886852d378a26952cd547a8852d153798852d2008851a26953d100876453d101207f7552798791696854d1008855d1008755d1537a879b6955d20088c4569d6d6d7551675479539c6352ce76527e00ce88c0529d53ce547a8853cf587f77527f758152cf7601227f77527f758176537aa16951cf527901247f778178567f75816ea169547901207f77527f75810164957602e803a269547900a2695178567a95537a547a9403805101938c038051019695021027026d019596937600a2697c789352c6537a5c7f77547f75817600a0697b0400e1f505957c969452d35279a26952cd557a8852d1547a8852d200887c51a2697c01207f7501207c7e7b7e02aa207caa7e01877e54cd8854cca16954d10087777767547a549d51cf52cf7c567f75817801247f77816ea26952ce76527e00ce8852c09d537901207f7553ce53cf7eaa88537901207f77527f75810164957602e803a269547a01227f77527f75817600a269517b7b95547a547a9403805101938c038051019695021027026d0195969354d378a26954cd537a8854d152798854d2008851a26953d200876453d1788791696854d200876454d1788791696855d200876455d1788791696856d200876456d17887916968c4579d6d6d5168686868"
+    }
+  },
+  "supported": [
+    "BCH_2025_05"
+  ],
+  "version": 0
+}

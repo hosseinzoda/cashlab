@@ -1,7 +1,9 @@
 import { ValueError, InvalidProgramState } from './exceptions.js';
 import * as libauth from './libauth.js';
-import type { SpendableCoin, TokenId } from './types.js';
-import { SpendableCoinType, NATIVE_BCH_TOKEN_ID } from './constants.js';
+import type {
+  SpendableCoin, TokenId, InputParamsWithUnlocker,
+} from './types.js';
+import { SpendableCoinType, InputUnlockerType, NATIVE_BCH_TOKEN_ID } from './constants.js';
 import { convertTokenIdToUint8Array, binToHex } from './util.js';
 
 export const walletTemplateP2pkhNonHd: libauth.WalletTemplate = {
@@ -109,6 +111,39 @@ export const convertSpendableCoinsToLAInputsWithSourceOutput = (input_coins: Spe
   return result;
 }
 
+export const spendableCoinToInputWithUnlocker = <OutputType>(coin: SpendableCoin<OutputType>, params: { sequence_number: number }): InputParamsWithUnlocker<OutputType> => {
+  if (coin.type == SpendableCoinType.P2PKH) {
+    const p2pkh_compiler = libauth.walletTemplateToCompilerBCH(libauth.walletTemplateP2pkhNonHd);
+    return {
+      utxo: { outpoint: coin.outpoint, output: coin.output },
+      sequence_number: params.sequence_number,
+      unlocker_type: InputUnlockerType.LIBAUTH_UNLOCKER,
+      getUnlockBytecodeCompilationDirective () {
+        return {
+          compiler: p2pkh_compiler,
+          script: 'unlock',
+          data: {
+            keys: {
+              privateKeys: {
+                key: coin.key,
+              },
+            },
+          },
+        };
+      },
+    };
+  } else if (coin.type == SpendableCoinType.UNLOCK_ON_DEMAND) {
+    return {
+      utxo: { outpoint: coin.outpoint, output: coin.output },
+      sequence_number: params.sequence_number,
+      unlocker_type: InputUnlockerType.ON_DEMAND_UNLOCKER,
+      unlock: coin.unlock,
+    };
+  } else {
+    throw new ValueError(`unknown spendable coin type: ${(coin as any).type}`);
+  }
+};
+
 export const calcAvailablePayoutFromLASourceOutputsAndOutputs = (source_outputs: libauth.Output<Uint8Array, Uint8Array>[], outputs: libauth.Output<Uint8Array, Uint8Array>[]): Array<{ token_id: TokenId, amount: bigint }> => {
   const available_payouts: Array<{ token_id: TokenId, amount: bigint }> = [ { token_id: NATIVE_BCH_TOKEN_ID, amount: 0n } ];
   const bch_available_payout = available_payouts.find((a) => a.token_id == NATIVE_BCH_TOKEN_ID);
@@ -144,3 +179,12 @@ export const calcAvailablePayoutFromLASourceOutputsAndOutputs = (source_outputs:
   }
   return available_payouts;
 };
+
+export const generateBytecodeWithLibauthCompiler = (compiler: libauth.CompilerBCH, params: { scriptId: string, data?: libauth.CompilationData<libauth.CompilationContextBCH> }): Uint8Array => {
+  const bytecode_result = compiler.generateBytecode({ ...params, scriptId: params.scriptId, data: params.data || {} });
+  if (!bytecode_result.success) {
+    throw new ValueError(`Failed to generate bytecode, params: ${JSON.stringify(params, null, '  ')}, result: ${JSON.stringify(bytecode_result, null, '  ')}`);
+  }
+  return bytecode_result.bytecode;
+};
+

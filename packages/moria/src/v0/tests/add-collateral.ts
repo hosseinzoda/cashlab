@@ -27,7 +27,7 @@ test('moria-v0-add-collateral', (t) => {
 
   const mint_payout_coins: SpendableCoin[] = [
     ...mint_result.payouts.map((utxo) => ({
-      type: SpendableCoinType.P2PKH,
+      type: SpendableCoinType.P2PKH as SpendableCoinType.P2PKH,
       key: sb.PRIVATE_KEY,
       ...utxo,
     })),

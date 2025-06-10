@@ -166,6 +166,11 @@ export class BurnTokenException extends Exception {
     super(message || '');
   }
 };
+export class BurnNFTException extends Exception {
+  constructor (message?: string) {
+    super(message || '');
+  }
+};
 
 for (let [ name, exception ] of [
   [ 'Exception', Exception ],
@@ -176,6 +181,7 @@ for (let [ name, exception ] of [
   [ 'InsufficientFunds', InsufficientFunds ],
   [ 'InvalidProgramState', InvalidProgramState ],
   [ 'BurnTokenException', BurnTokenException ],
+  [ 'BurnNFTException', BurnNFTException ],
 ]) {
   ExceptionRegistry.add(name as string, exception as IBaseExceptionConstructor)
 }

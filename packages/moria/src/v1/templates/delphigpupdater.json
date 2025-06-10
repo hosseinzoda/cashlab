@@ -1,0 +1,61 @@
+{
+  "$schema": "https://ide.bitauth.com/authentication-template-v0.schema.json",
+  "description": "Delphi updater from general protocol, The contract is used in MoriaV1",
+  "name": "delphigpupdater",
+  "entities": {
+    "main": {
+      "description": "",
+      "name": "main",
+      "scripts": [
+        "__main__", "update", "use", "withdraw_bch"
+      ],
+      "variables": {
+        "oracle_public_key": {
+          "description": "Oracle's public key.",
+          "name": "oracle_public_key",
+          "type": "WalletData"
+        },
+        "migrate_token_category": {
+         "description": "Permitted token id to unlock the migrate script. (reversed)",
+          "name": "migrate_token_category",
+          "type": "WalletData"
+        },
+        "oracle_datasig":  {
+          "description": "oracle datasig",
+          "name": "oracle_datasig",
+          "type": "AddressData"
+        },
+        "oracle_message": {
+          "description": "",
+          "name": "oracle_message",
+          "type": "AddressData"
+        },
+      }
+    }
+  },
+  "scripts": {
+    "update": {
+      "name": "Update the oracle data",
+      "script": "<oracle_message> // arg1: oracleMessage\n<oracle_datasig> // arg0: oracleSig\n<0> // update abi index",
+      "unlocks": "__main__"
+    },
+    "use": {
+      "name": "Migrate the oracle updater.",
+      "script": "<1> // use abi index",
+      "unlocks": "__main__"
+    },
+    "__main__": {
+      "lockingType": "p2sh32",
+      "name": "Delphi gp updater locking script",
+      "script": "<migrate_token_category> <oracle_public_key> __main_script__"
+    },
+    "__main_script__": {
+      "name": "Delphi gp updater redeem script",
+      "script": "0x5279009c635379827701409d537a54797bbbc0009d51ce0087916952ce0088c3539d00cc00c6a26900cd00c78800d100ce885279547f75815379587f77547f7581547a5c7f77547f758151cf567f77527f7581537a56807c52807e7b54807e7c54807e00cc00c6a26900cd00c78800d100ce8851d28851d151ce8852d10088c4539c7777677b519d00ce7b877768"
+    }
+  },
+  "supported": [
+    "BCH_2025_05"
+  ],
+  "version": 0
+}
