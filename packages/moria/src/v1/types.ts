@@ -17,17 +17,17 @@ export type MoriaCompilerContext = {
 
   moria_token_id: TokenId;
   delphi_token_id: TokenId;
+  bporacle_token_id: TokenId;
   batonminter_token_id: TokenId;
   interest_nfthash: Uint8Array;
   interest_locking_bytecode: Uint8Array;
-
-  txfee_per_byte: Fraction;
 
   mint_min_amount: bigint;
   mint_max_amount: bigint;
   mint_min_bp_rate: bigint;
   mint_max_bp_rate: bigint;
 
+  txfee_per_byte: Fraction | null;
   getOutputMinAmount (output: Output): bigint;
   getPreferredTokenOutputBCHAmount (output: Output): bigint | null;
 };

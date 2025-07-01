@@ -77,7 +77,7 @@ export const createMoriaMUSDV1CompilerContext = ({
   getOutputMinAmount,
   getPreferredTokenOutputBCHAmount,
 }: {
-  txfee_per_byte: Fraction,
+  txfee_per_byte: Fraction | null,
   getOutputMinAmount?: (output: Output) => bigint,
   getPreferredTokenOutputBCHAmount?: (output: Output) => bigint | null,
 }): MoriaCompilerContext => {
@@ -96,12 +96,13 @@ export const createMoriaMUSDV1CompilerContext = ({
   const interest_locking_bytecode = generateBytecodeWithLibauthCompiler(p2nfth_compiler, { scriptId: '__main__', data: { bytecode: { nfthash: interest_nfthash } } });
   const moria_token_id = "b38a33f750f84c5c169a6f23cb873e6e79605021585d4f3408789689ed87f366";
   const delphi_token_id = "d0d46f5cbd82188acede0d3e49c75700c19cb8331a30101f0bb6a260066ac972";
+  const bporacle_token_id = "01711e39e7bf3b8ca0d9a6fc6ea32e340caa1d64dc7d1dc51fae20fd66755558";
   const batonminter_token_id = "9c8362ec067e2d516064b6184b6ef0c9a6e5daa7dfb4693e9764de48460b3d9b";
   return {
     moria_compiler: createCompilerFromTemplateAndPredefinedWalletData('v1/moria', moria_template, {
       delphi_token_category: hexToBin(delphi_token_id).reverse(),
       peek_token_category: hexToBin("15bac1da28946f31b9b2fa90e478f5ed1a16b7b0b8a4e45055ec9df704b9da07").reverse(),
-      bporacle_token_category: hexToBin("01711e39e7bf3b8ca0d9a6fc6ea32e340caa1d64dc7d1dc51fae20fd66755558").reverse(),
+      bporacle_token_category: hexToBin(bporacle_token_id).reverse(),
       p2nft_bytecode,
       interest_locking_bytecode,
     }),
@@ -121,11 +122,11 @@ export const createMoriaMUSDV1CompilerContext = ({
     batonminter_compiler: createCompilerFromTemplateAndPredefinedWalletData('v1/batonminter', batonminter_template, {
       withdraw_token_category: hexToBin("0d20157f9310fa8c834c5fb8be4c94440ff06495f8d8165e753da1037aa204c0").reverse(),
     }),
-    moria_token_id, delphi_token_id, batonminter_token_id,
+    moria_token_id, delphi_token_id, bporacle_token_id, batonminter_token_id,
     interest_nfthash, interest_locking_bytecode,
 
     mint_min_amount: 1000n, // 10.00 MUSD
-    mint_max_amount: 1000000n, // 10000.00 MUSD
+    mint_max_amount: 3270000n, // 32700.00 MUSD
     mint_min_bp_rate: 0n, // 0%
     mint_max_bp_rate: 32700n, // 327%
 
@@ -181,8 +182,8 @@ export class MoriaMutator {
     return result;
   }
 
-  mintLoanWithExistingLoanAgent (params: { loan_amount: bigint, collateral_amount: bigint, annual_interest_bp: bigint }, funding_coins: SpendableCoin[], loan_agent_nfthash: Uint8Array, payout_rules: PayoutRule[]): MoriaTxResult & { loan_utxo: UTXOWithNFT } {
-    const result = mintLoanWithExistingLoanAgent(this._context.compiler_context, { moria: this._context.moria_utxo, delphi: this._context.delphi_utxo }, params, funding_coins, loan_agent_nfthash, payout_rules);
+  mintLoanWithExistingLoanAgent (params: { loan_amount: bigint, collateral_amount: bigint, annual_interest_bp: bigint }, funding_coins: SpendableCoin[], loan_agent_coin: SpendableCoin<OutputWithNFT>, output_loan_agent_locking_bytecode: Uint8Array, payout_rules: PayoutRule[]): MoriaTxResult & { loan_utxo: UTXOWithNFT } {
+    const result = mintLoanWithExistingLoanAgent(this._context.compiler_context, { moria: this._context.moria_utxo, delphi: this._context.delphi_utxo }, params, funding_coins, loan_agent_coin, output_loan_agent_locking_bytecode, payout_rules);
     this._onMoriaTx(result);
     return result;
   }

@@ -65,7 +65,7 @@ export function mintLoanWithBatonMinter (context: MoriaCompilerContext, utxos: {
   return result as ReturnType<typeof mintLoanWithBatonMinter>;
 }
 
-export function mintLoanWithExistingLoanAgent (context: MoriaCompilerContext, utxos: { moria: UTXOWithNFT, delphi: UTXOWithNFT }, params: { loan_amount: bigint, collateral_amount: bigint, annual_interest_bp: bigint }, funding_coins: SpendableCoin[], loan_agent_nfthash: Uint8Array, payout_rules: PayoutRule[]): MoriaTxResult & { loan_utxo: UTXOWithNFT } {
+export function mintLoanWithExistingLoanAgent (context: MoriaCompilerContext, utxos: { moria: UTXOWithNFT, delphi: UTXOWithNFT }, params: { loan_amount: bigint, collateral_amount: bigint, annual_interest_bp: bigint }, funding_coins: SpendableCoin[], loan_agent_coin: SpendableCoin<OutputWithNFT>, output_loan_agent_locking_bytecode: Uint8Array, payout_rules: PayoutRule[]): MoriaTxResult & { loan_utxo: UTXOWithNFT, loan_agent_utxo: UTXOWithNFT } {
   validateLoanSanity(utxos.delphi, params);
   const moria_modifiers: GenerateMoriaModifiers = {
     script: 'moria_borrow',
@@ -75,7 +75,10 @@ export function mintLoanWithExistingLoanAgent (context: MoriaCompilerContext, ut
       annual_interest_bp: params.annual_interest_bp,
     },
     loan_agent: {
-      nfthash: loan_agent_nfthash,
+      coin: loan_agent_coin,
+      output: {
+        locking_bytecode: output_loan_agent_locking_bytecode,
+      },
     },
   };
   const result: MoriaTxResult = generateMoriaTxSub(context, utxos.moria, moria_modifiers, utxos.delphi, funding_coins, payout_rules);

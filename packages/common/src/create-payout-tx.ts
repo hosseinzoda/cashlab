@@ -1,4 +1,4 @@
-import type { ChainedTxResult, TxResult, SpendableCoin, PayoutRule, Output, UTXO, TokenId } from './types.js';
+import type { ChainedTxResult, TxResult, SpendableCoin, PayoutRule, Output, UTXO, TokenId, Fraction } from './types.js';
 import { InvalidProgramState, ValueError } from './exceptions.js';
 import { PayoutAmountRuleType, SpendableCoinType } from './constants.js';
 import { convertTokenIdToUint8Array } from './util.js';
@@ -12,7 +12,7 @@ import * as libauth from './libauth.js';
  * The non-mixed token payouts will use the preferred bch amount or the min amount as the bch amount of its output.
  */
 export type CreatePayoutTxContext = {
-  txfee_per_byte: bigint;
+  txfee_per_byte: Fraction | bigint;
   getOutputMinAmount (output: Output): bigint;
   getPreferredTokenOutputBCHAmount (output: Output): bigint | null;
 };
@@ -57,9 +57,6 @@ const convertToJSONSerializable = (v: any): any => {
  * @returns A chain transaction results.
  */
 export function createPayoutChainedTx (context: CreatePayoutTxContext, input_coins: SpendableCoin[], payout_rules: PayoutRule[]): ChainedTxResult {
-  if (!(context.txfee_per_byte >= 0n)) {
-    throw new ValueError('txfee should be greater than or equal to zero, txfee_per_byte type: bigint');
-  }
   if (input_coins.length == 0) {
     throw new ValueError('number of input_coins should be greater than zero');
   }
@@ -110,9 +107,6 @@ export function createPayoutChainedTx (context: CreatePayoutTxContext, input_coi
  * @returns A chain transaction results.
  */
 export function createPayoutTx (context: CreatePayoutTxContext, input_coins: SpendableCoin[], payout_rules: PayoutRule[]): TxResult {
-  if (!(context.txfee_per_byte >= 0n)) {
-    throw new ValueError('txfee should be greater than or equal to zero, txfee_per_byte type: bigint');
-  }
   if (input_coins.length == 0) {
     throw new ValueError('number of input_coins should be greater than zero');
   }
@@ -132,6 +126,11 @@ export function createPayoutTx (context: CreatePayoutTxContext, input_coins: Spe
 const utxoFromPayoutResult = (txhash: Uint8Array, a: { output: Output, output_index: number }): UTXO => ({ outpoint: { txhash, index: a.output_index }, output: a.output });
 
 const createPayoutChainedTxSub = (context: CreatePayoutTxContext, input_items: LibauthTemplateInputAndSourceOutput[], change_payout_rule: PayoutRule, payout_rules: PayoutRule[]): { tx_result: TxResult, done: boolean, unused_input_items: Array<{ input: libauth.InputTemplate<libauth.CompilerBCH>, source_output: libauth.Output }>  } => {
+  const txfee_per_byte = typeof context.txfee_per_byte == 'bigint' ?
+    { numerator: context.txfee_per_byte, denominator: 1n } : context.txfee_per_byte as Fraction;
+  if (!(txfee_per_byte.numerator >= 0n && txfee_per_byte.denominator > 0n)) {
+    throw new ValueError('txfee should be greater than or equal to zero, txfee_per_byte type: Fraction | bigint');
+  }
   const makeLAOutputs = (outputs: Output[]): libauth.Output[] => {
     return outputs.map((a) => ({
       lockingBytecode: a.locking_bytecode,
@@ -170,7 +169,7 @@ const createPayoutChainedTxSub = (context: CreatePayoutTxContext, input_items: L
           /* c8 ignore next */
           throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(result.errors, null, '  '));
         }
-        return BigInt(libauth.encodeTransaction(result.transaction).length) * context.txfee_per_byte;
+        return BigInt(libauth.encodeTransaction(result.transaction).length) * txfee_per_byte.numerator / txfee_per_byte.denominator;
       },
     };
     const sub_payout_rules = done ? payout_rules : [change_payout_rule];

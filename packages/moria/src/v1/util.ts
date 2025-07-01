@@ -22,7 +22,7 @@ import {
 } from '@cashlab/common/constants.js';
 
 export type ITxGenContext = {
-  txfee_per_byte: Fraction;
+  txfee_per_byte: Fraction | null;
   getOutputMinAmount (output: Output): bigint;
   getPreferredTokenOutputBCHAmount (output: Output): bigint | null;
 };
@@ -241,9 +241,11 @@ export const buildOutputsWithConstraints = (constraints: OutputConstraint[], ins
 };
 
 export const generateTransactionWithConstraintsAndPayoutRuleExcludingTxFee = (builder_context: ITxGenContext, inputs: InputParamsWithUnlocker[], output_constraint_list: OutputConstraint[], payout_rules: PayoutRule[], options: { strict_constraints: boolean }) => {
+  const txfee_per_byte = builder_context.txfee_per_byte ? builder_context.txfee_per_byte :
+    { numerator: 0n, denominator: 1n };
   const calcTxFeeWithOutputs = (payout_outputs: Output[]): bigint => {
     const result = generateTransactionWithConstraintsSub(inputs, output_constraint_list, payout_outputs, options);
-    return BigInt(libauth.encodeTransaction(result.libauth_transaction).length) * builder_context.txfee_per_byte.numerator / builder_context.txfee_per_byte.denominator;
+    return BigInt(libauth.encodeTransaction(result.libauth_transaction).length) * txfee_per_byte.numerator / txfee_per_byte.denominator;
   };
   const available_payouts: Array<{ token_id: TokenId, amount: bigint }> = calcAvailablePayoutFromIO(inputs, output_constraint_list.filter((a)  => a.type == 'PREDEFINED').map((a) => a.output));
   // validate token/bch amounts
@@ -342,7 +344,6 @@ export type GenerateMoriaModifiers = {
     };
     batonminter_utxo?: UTXOWithNFT;
     batonminter_nft_capability?: NonFungibleTokenCapability;
-    nfthash?: Uint8Array;
   };
   redeem_params?: {
     bporacle_utxo: UTXOWithNFT;
@@ -421,6 +422,10 @@ export const generateMoriaTxSub = (context: MoriaCompilerContext, moria_utxo: UT
       },
     });
   }
+  if (moria_modifiers.loan_agent?.coin != null &&
+      moria_modifiers.loan_agent.coin.output.token?.nft == null) {
+    throw new ValueError(`moria_modifiers.loan_agent.coin should be a nft.`);
+  }
   if (funding_coins.filter((a) => a.output.token?.nft != null).length > 0) {
     throw new ValueError(`funding_coins should not contain nfts!`);
   }
@@ -494,6 +499,9 @@ export const generateMoriaTxSub = (context: MoriaCompilerContext, moria_utxo: UT
           if (moria_modifiers.redeem_params == null) {
             /* c8 ignore next */
             throw new InvalidProgramState(`moria_modifiers.redeem_params == null`);
+          }
+          if (bpValueFromBPOracleCommitment(moria_modifiers.redeem_params.bporacle_utxo.output.token.nft.commitment) < annualInterestBPFromLoanCommitment(moria_modifiers.input_loan_utxo.output.token.nft.commitment)) {
+            throw new ValueError(`The input loan is not redeemable at the current state.`);
           }
           // redeem
           // insert bporacle, io#3
@@ -623,32 +631,33 @@ export const generateMoriaTxSub = (context: MoriaCompilerContext, moria_utxo: UT
       if (moria_modifiers.loan_agent == null) {
         throw new ValueError(`moria_modifiers.loan_agent is null!`)
       }
-      let output_loan_agent_nft_info: { token_id: string, commitment: Uint8Array } | null = null;
+      let output_loan_agent_nft_info: { token_id: string, commitment: Uint8Array };
       if (moria_modifiers.script == 'moria_borrow') {
         if (!(moria_modifiers.difference > 0n)) {
           throw new ValueError(`moria_modifiers.difference should be greater than zero in a moria's mint tx.`);
         }
-        if (moria_modifiers.loan_agent.nfthash != null) {
-          // use provided nfthash
+        if (initial_bch_funding_coin == null) {
+          throw new ValueError(`A pure bch funding coin is required!`);
+        }
+        // pure bch funding coin input#2
+        inputs.push(spendableCoinToInputWithUnlocker(initial_bch_funding_coin, { sequence_number: 0 }));
+        // only pure bch funding coins are expected
+        if (funding_coins.filter((a) => a.output.token != null).length > 0) {
+          throw new ValueError(`Expecting all funding coins to not contain any tokens.`);
+        }
+        if (moria_modifiers.loan_agent.coin != null) {
+          // use provided input loan agent
           if (moria_modifiers.loan_agent.batonminter_utxo != null || moria_modifiers.loan_agent.batonminter_nft_capability != null) {
-            throw new ValueError(`moria_modifiers.loan_agent.nfthash is defined, Do not provide loan_agent.batonminter data.`);
-          }
-          if (initial_bch_funding_coin != null) {
-            // push back the pure bch funding coin to funding coin list
-            other_funding_coins.unshift(initial_bch_funding_coin);
-          }
+            throw new ValueError(`moria_modifiers.loan_agent.coin is defined, Do not provide loan_agent.batonminter data.`);
+          }   
+          // add loan agent, input#3
+          inputs.push(spendableCoinToInputWithUnlocker(moria_modifiers.loan_agent.coin, { sequence_number: 0 }));
+          output_loan_agent_nft_info = {
+            token_id: moria_modifiers.loan_agent.coin.output.token.token_id,
+            commitment: moria_modifiers.loan_agent.coin.output.token.nft.commitment,
+          };
         } else {
           // use batonminter to build a nft agent
-          if (initial_bch_funding_coin == null) {
-            throw new ValueError(`A pure bch funding coin is required!`);
-          }
-          // pure bch funding coin input#2
-          inputs.push(spendableCoinToInputWithUnlocker(initial_bch_funding_coin, { sequence_number: 0 }));
-          // only pure bch funding coins are expected
-          if (funding_coins.filter((a) => a.output.token != null).length > 0) {
-            throw new ValueError(`Expecting all funding coins to not contain any tokens.`);
-          }
-
           // add minter nft input#3
           if (moria_modifiers.loan_agent.batonminter_utxo == null) {
             throw new ValueError(`moria_modifiers.loan_agent.batonminter_utxo is not defined.`);
@@ -662,9 +671,6 @@ export const generateMoriaTxSub = (context: MoriaCompilerContext, moria_utxo: UT
           };
         }
       } else {
-        if (moria_modifiers.loan_agent.nfthash != null) {
-          throw new ValueError(`moria_modifiers.loan_agent.nfthash should not be defined on refinance.`);
-        }
         if (moria_modifiers.input_loan_utxo == null) {
           throw new ValueError(`input_loan_utxo is not defined!`);
         }
@@ -696,49 +702,37 @@ export const generateMoriaTxSub = (context: MoriaCompilerContext, moria_utxo: UT
           commitment: moria_modifiers.loan_agent.coin.output.token.nft.commitment,
         };
       }
-      let loan_agent_nfthash: Uint8Array;
-      if (output_loan_agent_nft_info != null) {
-        if (moria_modifiers.loan_agent.output == null) {
-          throw new ValueError(`moria_modifiers.loan_agent.output is not defined!`);
-        }
-        let loan_agent_output_capability;
-        if (moria_modifiers.loan_agent.coin == null) {
-          if (moria_modifiers.loan_agent.batonminter_nft_capability == null) {
-            /* c8 ignore next */
-            throw new InvalidProgramState(`moria_modifiers.loan_agent.coin == null && moria_modifiers.loan_agent.batonminter_nft_capability == null`);
-          }
-          loan_agent_output_capability = moria_modifiers.loan_agent.batonminter_nft_capability;
-        } else {
-          loan_agent_output_capability = moria_modifiers.loan_agent.coin.output.token.nft.capability;
-        }
-        loan_agent_output = {
-          locking_bytecode: moria_modifiers.loan_agent.output.locking_bytecode,
-          amount: -1n,
-          token: {
-            token_id: output_loan_agent_nft_info.token_id,
-            amount: moria_modifiers.loan_agent.output.token_amount != null ? moria_modifiers.loan_agent.output.token_amount : 0n,
-            nft: {
-              capability: loan_agent_output_capability,
-              commitment: output_loan_agent_nft_info.commitment,
-            },
-          },
-        };
-        if (moria_modifiers.loan_agent.output.amount != null) {
-          loan_agent_output.amount = moria_modifiers.loan_agent.output.amount;
-        } else {
-          loan_agent_output.amount = context.getOutputMinAmount(loan_agent_output);
-        }
-        loan_agent_nfthash = outputNFTHash(loan_agent_output);
-      } else {
-        if (moria_modifiers.loan_agent.nfthash == null) {
-          /* c8 ignore next */
-          throw new InvalidProgramState(`output_loan_agent_nft_info == null && moria_modifiers.loan_agent.nfthash == null`);
-        }
-        if (moria_modifiers.loan_agent.output != null) {
-          throw new ValueError(`should not define moria_modifiers.loan_agent.output when loan_agent.nfthash is defined!`);
-        }
-        loan_agent_nfthash = moria_modifiers.loan_agent.nfthash;
+      if (moria_modifiers.loan_agent.output == null) {
+        throw new ValueError(`moria_modifiers.loan_agent.output is not defined!`);
       }
+      let loan_agent_output_capability;
+      if (moria_modifiers.loan_agent.coin == null) {
+        if (moria_modifiers.loan_agent.batonminter_nft_capability == null) {
+          /* c8 ignore next */
+          throw new InvalidProgramState(`moria_modifiers.loan_agent.coin == null && moria_modifiers.loan_agent.batonminter_nft_capability == null`);
+        }
+        loan_agent_output_capability = moria_modifiers.loan_agent.batonminter_nft_capability;
+      } else {
+        loan_agent_output_capability = moria_modifiers.loan_agent.coin.output.token.nft.capability;
+      }
+      loan_agent_output = {
+        locking_bytecode: moria_modifiers.loan_agent.output.locking_bytecode,
+        amount: -1n,
+        token: {
+          token_id: output_loan_agent_nft_info.token_id,
+          amount: moria_modifiers.loan_agent.output.token_amount != null ? moria_modifiers.loan_agent.output.token_amount : 0n,
+          nft: {
+            capability: loan_agent_output_capability,
+            commitment: output_loan_agent_nft_info.commitment,
+          },
+        },
+      };
+      if (moria_modifiers.loan_agent.output.amount != null) {
+        loan_agent_output.amount = moria_modifiers.loan_agent.output.amount;
+      } else {
+        loan_agent_output.amount = context.getOutputMinAmount(loan_agent_output);
+      }
+      const loan_agent_nfthash: Uint8Array = outputNFTHash(loan_agent_output);
       const input_loan_principal: bigint | null = moria_modifiers.input_loan_utxo ? principalFromLoanCommitment(moria_modifiers.input_loan_utxo.output.token.nft.commitment) : null;
       const loan_locking_bytecode = generateBytecodeWithLibauthCompiler(context.moria_compiler, { scriptId: 'loan' });
       const output_loan_principal = (input_loan_principal != null ? input_loan_principal : 0n) + moria_modifiers.difference;
@@ -783,7 +777,7 @@ export const generateMoriaTxSub = (context: MoriaCompilerContext, moria_utxo: UT
           can_contain_token: false,
           allows_opreturn: true,
         });
-        if (loan_agent_output != null && moria_modifiers.loan_agent.batonminter_utxo != null) {
+        if (moria_modifiers.loan_agent.batonminter_utxo != null) {
           // batonminter at output#5
           batonminter_mint_fee = 1000n;
           const batonminter_utxo = moria_modifiers.loan_agent.batonminter_utxo;
@@ -818,25 +812,20 @@ export const generateMoriaTxSub = (context: MoriaCompilerContext, moria_utxo: UT
             output: loan_agent_output,
           });
         } else {
-          if (loan_agent_output != null || moria_modifiers.loan_agent.batonminter_utxo != null) {
-            /* c8 ignore next */
-            throw new InvalidProgramState(`(loan_agent_output || moria_modifiers.loan_agent.batonminter_utxo) is null`);
-          }
-          // output#6 & output#7
-          for (let i = 0; i < 2; i++) {
-            output_constraint_list.push({
-              type: 'VARIABLE_AMOUNT',
-              can_contain_token: true,
-              allows_opreturn: true,
-              disallowed_tokens: [ context.moria_token_id ],
-            });
-          }
+          // baton nft at output#5
+          output_constraint_list.push({
+            type: 'PREDEFINED',
+            output: loan_agent_output,
+          });
+          // change, output#6
+          output_constraint_list.push({
+            type: 'VARIABLE_AMOUNT',
+            can_contain_token: true,
+            allows_opreturn: true,
+            disallowed_tokens: [ context.moria_token_id ],
+          });
         }
       } else {
-        if (loan_agent_output == null) {
-          /* c8 ignore next */
-          throw new InvalidProgramState(`loan_agent_output == null (on refi)`);
-        }
         if (input_loan_principal == null) {
           /* c8 ignore next */
           throw new InvalidProgramState(`input_loan_principal == null (on refi)`);

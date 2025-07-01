@@ -1,5 +1,6 @@
 import test from 'ava';
 
+import type { SpendableCoin, OutputWithNFT } from '@cashlab/common/types.js';
 import { SpendableCoinType } from '@cashlab/common/constants.js';
 import { hexToBin }  from '@cashlab/common/libauth.js';
 
@@ -10,7 +11,7 @@ import { validateCreatedLoan, validateMoriaTxPayouts } from './fixtures/helpers.
 import { uint8ArrayEqual } from '@cashlab/common/util.js';
 import { mintLoanWithBatonMinter, mintLoanWithExistingLoanAgent } from '../compiler.js';
 import {
-  loanAgentNFTHashFromLoanCommitment, outputNFTHash,
+  loanAgentNFTHashFromLoanCommitment,
 } from '../util.js';
 import { createMoriaMUSDV1CompilerContext, verifyTxResult } from '../moria.js';
 
@@ -53,7 +54,11 @@ test('moria-v1-mint-loan', (t) => {
   // verify the validity of the transaction
   verifyTxResult(result0);
 
-  const loan_agent_nfthash = outputNFTHash(result0.loan_agent_utxo.output);
+  const loan_agent_coin: SpendableCoin<OutputWithNFT> = {
+    type: SpendableCoinType.P2PKH as SpendableCoinType.P2PKH,
+    key: sb.PRIVATE_KEY,
+    ...result0.loan_agent_utxo,
+  };
   const mint1_funding_coins = result0.payouts.filter((a) => a.output.token == null)
     .map((utxo) => ({
       type: SpendableCoinType.P2PKH as SpendableCoinType.P2PKH,
@@ -66,11 +71,11 @@ test('moria-v1-mint-loan', (t) => {
     annual_interest_bp: 100n,
   };
   // mint another loan with the result0's loan agent nft
-  const result1 = mintLoanWithExistingLoanAgent(compiler_context, { moria: result0.moria_utxo, delphi: result0.delphi_utxo }, mint1_params, mint1_funding_coins, loan_agent_nfthash, payout_rules)
+  const result1 = mintLoanWithExistingLoanAgent(compiler_context, { moria: result0.moria_utxo, delphi: result0.delphi_utxo }, mint1_params, mint1_funding_coins, loan_agent_coin, loan_agent_locking_bytecode, payout_rules)
   // loan_nfthash should match (with a predefined value?)
   t.assert(uint8ArrayEqual(expected_loan_nfthash, loanAgentNFTHashFromLoanCommitment(result1.loan_utxo.output.token.nft.commitment)), 'unexpected loan nfthash!');
-  validateCreatedLoan(t, mint1_params, result1.delphi_utxo, result1.loan_utxo, result0.loan_agent_utxo, loan_agent_locking_bytecode);
-  validateMoriaTxPayouts(t, compiler_context.moria_token_id, { bch_diff: -1n * mint1_params.collateral_amount, token_diff: mint1_params.loan_amount }, null, result1, mint1_funding_coins, sb.CHANGE_PAYOUT_RULE.locking_bytecode);
+  validateCreatedLoan(t, mint1_params, result1.delphi_utxo, result1.loan_utxo, result1.loan_agent_utxo, loan_agent_locking_bytecode);
+  validateMoriaTxPayouts(t, compiler_context.moria_token_id, { bch_diff: -1n * mint1_params.collateral_amount, token_diff: mint1_params.loan_amount }, loan_agent_coin, result1, mint1_funding_coins, sb.CHANGE_PAYOUT_RULE.locking_bytecode);
   // verify the validity of the transaction
   verifyTxResult(result1);
 });
