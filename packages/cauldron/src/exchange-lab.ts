@@ -18,13 +18,14 @@ import { createChainedTradeTx } from './create-chained-trade-tx.js';
 import {
   PoolPair, calcPairRate, calcTradeSummary, sizeOfPoolV0InAnExchangeTx,
   calcTradeWithTargetSupplyFromAPair,
-  approxAvailableAmountInAPairAtTargetAvgRate, approxAvailableAmountInAPairAtTargetRate, calcTradeWithTargetDemandFromAPair,
+  approxAvailableAmountInAPairAtTargetAvgRate, calcTradeWithTargetDemandFromAPair,
   fillTradeToTargetDemandFromPairsWithFillingStepper, bestRateToTradeInPoolsForTargetDemand,
   eliminateNetNegativePoolsInATradeWithTargetDemand,
   requiredSupplyToMaxOutAPair,
   bestRateToTradeInPoolsForTargetSupply,
   eliminateNetNegativePoolsInATradeWithTargetSupply,
   fillTradeToTargetSupplyFromPairsWithFillingStepper,
+  approxAvailableAmountInAPairBelowTargetRate,
 } from './util.js';
 
 const defaultOutputMinBCHReserve = (): bigint => 693n;
@@ -236,8 +237,9 @@ export default class ExchangeLab {
   }
 
   /**
-   * Construct a trade from a set of `input_pools` with the following condition, Demands as much possible below a target rate.
+   * Construct a trade from a set of `input_pools` with the following condition, Demands offers below the target rate.
    * Meaning the differential rate of the demand at the highest rate is below the provided rate.
+   * This function does not consider pool fees, Assumes all pools have zero fee.
    * @param supply_token_id the supply token of the trade
    * @param demand_token_id the demand token of the trade
    * @param rate the target rate
@@ -252,7 +254,7 @@ export default class ExchangeLab {
     for (const pool_pair of pools_pair) {
       const lower_bound = 1n;
       const upper_bound = pool_pair.b - pool_pair.b_min_reserve + 1n;
-      const best_guess = approxAvailableAmountInAPairAtTargetRate(pool_pair, target_rate, lower_bound, upper_bound);
+      const best_guess = approxAvailableAmountInAPairBelowTargetRate(pool_pair, target_rate, lower_bound, upper_bound);
       let trade = null;
       if (best_guess != null) {
         trade = calcTradeWithTargetDemandFromAPair(pool_pair, best_guess);
@@ -278,6 +280,7 @@ export default class ExchangeLab {
       summary: calcTradeSummary(result_entries, this._rate_denominator) as TradeSummary,
     } : null;
   }
+
   /**
    * Construct a trade from a set of `input_pools` with the following condition, Demands as much possible with a target average rate.
    * Meaning the differential rate of the demand at the highest rate is below the provided rate.

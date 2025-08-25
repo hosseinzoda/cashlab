@@ -2,6 +2,15 @@
 
 All notable changes of this module is documented in this file, Documenting changelog has start from version `0.0.9`.
 
+## cauldron [1.0.1] & moria [1.1.2] - 2025-08-25
+
+### ADDED
+
+- Generate MoriaV0::updateOracleMessage transaction.
+
+### FIXED
+
+- constructTradeAvailableAmountBelowTargetRate rounding error fixed, The function will construct a trade below the target rate.
 
 ## common [1.0.3] & moria [1.1.0] - 2025-06-10
 

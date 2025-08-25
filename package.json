@@ -21,9 +21,9 @@
   },
   "engines": {
     "node": ">=20.18.0",
-    "pnpm": "10.6.3"
+    "pnpm": "^10.15.0"
   },
-  "packageManager": "pnpm@10.6.3",
+  "packageManager": "pnpm@10.15.0",
   "type": "module",
   "c8": {
     "exclude": [

@@ -1,7 +1,8 @@
 import * as payoutBuilder from '@cashlab/common/payout-builder.js';
 import { ValueError, InvalidProgramState } from '@cashlab/common/exceptions.js';
 import {
-  convertTokenIdToUint8Array, outputFromLibauthOutput, uint8ArrayConcat,
+  convertTokenIdToUint8Array, outputFromLibauthOutput,
+  uint8ArrayEqual, uint8ArrayConcat,
 } from '@cashlab/common/util.js';
 import {
   publicKeyHashToP2pkhLockingBytecode, convertSpendableCoinsToLAInputsWithSourceOutput,
@@ -17,6 +18,7 @@ import type {
 } from './types.js';
 import type {
   UTXO, UTXOWithNFT, TokenId, Output, OutputWithFT, OutputWithNFT, SpendableCoin, PayoutRule,
+  TxResult,
 } from '@cashlab/common/types.js';
 import {
   NonFungibleTokenCapability, SpendableCoinType, PayoutAmountRuleType,
@@ -209,7 +211,7 @@ const generateMoriaTxSub = (context: CompilerContext, moria_utxo: UTXOWithNFT, m
       locktime: 0,
       version: 2,
       inputs, outputs: alt_outputs,
-    }); 
+    });
     if (!result.success) {
       /* c8 ignore next */
       throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(result.errors, null, '  '));
@@ -317,7 +319,7 @@ const generateMoriaTxSub = (context: CompilerContext, moria_utxo: UTXOWithNFT, m
     locktime: 0,
     version: 2,
     inputs, outputs,
-  }); 
+  });
   if (!result.success) {
     /* c8 ignore next */
     throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(result.errors, null, '  '));
@@ -676,7 +678,7 @@ export function redeemWithSunsetSignature (context: CompilerContext, moria_utxo:
     borrower_payouts: payout_result_list.filter((a) => a.payout_rule == borrower_payout_rule).map((a) => payoutResultToUTXO(txhash, a)),
     libauth_transaction: transaction,
     libauth_source_outputs: source_outputs,
-  };  
+  };
 }
 
 /**
@@ -789,7 +791,7 @@ export function addCollateral (context: CompilerContext, loan_utxo: UTXOWithNFT,
       locktime: 0,
       version: 2,
       inputs: la_inputs, outputs: alt_outputs,
-    }); 
+    });
     if (!result.success) {
       /* c8 ignore next */
       throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(result.errors, null, '  '));
@@ -816,7 +818,7 @@ export function addCollateral (context: CompilerContext, loan_utxo: UTXOWithNFT,
     locktime: 0,
     version: 2,
     inputs: la_inputs, outputs: la_outputs,
-  }); 
+  });
   if (!result.success) {
     /* c8 ignore next */
     throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(result.errors, null, '  '));
@@ -832,7 +834,7 @@ export function addCollateral (context: CompilerContext, loan_utxo: UTXOWithNFT,
     },
     libauth_transaction: result.transaction,
     libauth_source_outputs: la_source_outputs,
-  };  
+  };
 }
 
 /**
@@ -901,6 +903,132 @@ export function refiLoan (context: CompilerContext, moria_utxo: UTXOWithNFT, ora
     oracle_utxo: repay_tx_result.oracle_utxo,
     loan_utxo: mint_tx_result.loan_utxo,
     oracle_use_fee: mint_tx_result.oracle_use_fee + repay_tx_result.oracle_use_fee,
+  };
+}
+
+export function updateOracleMessage (context: CompilerContext, oracle_utxo: UTXOWithNFT, public_key: Uint8Array, message: Uint8Array, message_datasig: Uint8Array, input_coins: SpendableCoin[], payout_rules: PayoutRule[]): TxResult  {
+  const payouts_info = [];
+  const la_source_outputs: libauth.Output[] = [];
+  const la_inputs: libauth.InputTemplate<libauth.CompilerBCH>[] = [];
+  const la_outputs: libauth.OutputTemplate<libauth.CompilerBCH>[] = [];
+  { // oracle at io#1
+    if (oracle_utxo.output.token == null || oracle_utxo.output.token.nft == null) {
+      throw new ValueError('oracle_utxo is expected to be an nft!');
+    }
+    const source_output = {
+      lockingBytecode: oracle_utxo.output.locking_bytecode,
+      valueSatoshis: oracle_utxo.output.amount,
+      token: {
+        amount: oracle_utxo.output.token.amount,
+        category: convertTokenIdToUint8Array(oracle_utxo.output.token.token_id),
+        nft: {
+          capability: oracle_utxo.output.token.nft.capability,
+          commitment: oracle_utxo.output.token.nft.commitment,
+        },
+      },
+    };
+    const pkh = libauth.hash160(public_key);
+    if (!uint8ArrayEqual(oracle_utxo.output.token.nft.commitment.slice(0, 20), pkh)) {
+      throw new ValueError(`oracle pkh does not match.`);
+    }
+    la_source_outputs.push(source_output);
+    la_inputs.push({
+      outpointIndex: oracle_utxo.outpoint.index,
+      outpointTransactionHash: oracle_utxo.outpoint.txhash,
+      sequenceNumber: 0,
+      unlockingBytecode: {
+        compiler: context.oracle_compiler,
+        script: 'oracle_update',
+        data: {
+          bytecode: {
+            oracle_pubkey: public_key,
+            oracle_message: message,
+            oracle_datasig: message_datasig,
+          },
+        },
+        valueSatoshis: source_output.valueSatoshis,
+        token: source_output.token,
+      },
+    });
+    la_outputs.push({
+      // copy from input
+      lockingBytecode: oracle_utxo.output.locking_bytecode,
+      valueSatoshis: oracle_utxo.output.amount,
+      token: {
+        amount: oracle_utxo.output.token.amount,
+        category: convertTokenIdToUint8Array(oracle_utxo.output.token.token_id),
+        nft: {
+          capability: oracle_utxo.output.token.nft.capability,
+          commitment: uint8ArrayConcat([pkh, message]),
+        },
+      },
+    });
+  }
+  for (const { input, source_output } of convertSpendableCoinsToLAInputsWithSourceOutput(input_coins)) {
+    la_inputs.push(input);
+    la_source_outputs.push(source_output);
+  }
+  const available_payouts: Array<{ token_id: TokenId, amount: bigint }> = calcAvailablePayoutFromLASourceOutputsAndOutputs(la_source_outputs as libauth.Output<never, never>[], la_outputs as libauth.Output<never, never>[]);
+  // validate token/bch amounts
+  if (available_payouts.filter((a) => a.amount < 0n).length > 0) {
+    throw new ValueError(`Sum of the inputs & outputs is negative for the following token(s): ${available_payouts.filter((a) => a.amount < 0n).map((a) => a.token_id).join(', ')}`);
+  }
+  const calcTxFeeWithOutputs = (payout_outputs: Output[]): bigint => {
+    const alt_outputs = [ ...la_outputs, ...payout_outputs.map((a) => ({
+      lockingBytecode: a.locking_bytecode,
+      token: a.token ? {
+        amount: a.token.amount < 0n ? context.getOutputMinAmount(a) : a.token.amount,
+        category: convertTokenIdToUint8Array(a.token.token_id),
+        nft: a.token.nft ? {
+          capability: a.token.nft.capability,
+          commitment: a.token.nft.commitment,
+        } : undefined,
+      } : undefined,
+      valueSatoshis: a.amount,
+    })) ];
+    const result = libauth.generateTransaction({
+      locktime: 0,
+      version: 2,
+      inputs: la_inputs, outputs: alt_outputs,
+    });
+    if (!result.success) {
+      /* c8 ignore next */
+      throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(result.errors, null, '  '));
+    }
+    return BigInt(libauth.encodeTransaction(result.transaction).length) * context.txfee_per_byte;
+  };
+  const { payout_outputs: payout_outputs_with_rules, txfee, token_burns } = payoutBuilder.build(makePayoutContext(context, calcTxFeeWithOutputs), available_payouts, payout_rules, true);
+  const payout_outputs: Output[] = payout_outputs_with_rules.map((a) => a.output);
+  if (token_burns.length > 0) {
+    throw new ValueError(`Token burns not allowed.`);
+  }
+  for (const payout_output of payout_outputs) {
+    payouts_info.push({ output: payout_output, index: la_outputs.length });
+    la_outputs.push({
+      lockingBytecode: payout_output.locking_bytecode,
+      token: payout_output.token ? {
+        amount: payout_output.token.amount,
+        category: convertTokenIdToUint8Array(payout_output.token.token_id),
+      } : undefined,
+      valueSatoshis: payout_output.amount,
+    });
+  }
+  const result = libauth.generateTransaction({
+    locktime: 0,
+    version: 2,
+    inputs: la_inputs, outputs: la_outputs,
+  });
+  if (!result.success) {
+    /* c8 ignore next */
+    throw new InvalidProgramState('generate transaction failed!, errors: ' + JSON.stringify(result.errors, null, '  '));
+  }
+  const txbin = libauth.encodeTransaction(result.transaction);
+  const txhash = libauth.hashTransactionUiOrder(txbin);
+  return {
+    txbin, txhash, txfee,
+    payouts: payouts_info.map((a) => ({ outpoint: { txhash, index: a.index }, output: a.output })),
+    libauth_transaction: result.transaction,
+    libauth_source_outputs: la_source_outputs,
   };
 }
 
