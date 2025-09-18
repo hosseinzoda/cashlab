@@ -2,6 +2,18 @@
 
 All notable changes of this module is documented in this file, Documenting changelog has start from version `0.0.9`.
 
+## cauldron [1.0.2] & common [1.0.5] - 2025-09-18
+
+### ADDED
+
+- `cauldron/binutil.js::buildPoolV0RedeemScriptBytecode`
+
+### CHANGED
+
+- `common/create-payout-tx.js::createPayoutTx`, Add support of `input_coins` with type `SpendableCoinType.UNLOCK_ON_DEMAND`.
+- `common/create-payout-tx.js::createPayoutChainedTx`, Allow a single change payout_rule to not require `spending_parameters`.
+- p2pkh to sign with the following type `all_outputs_all_utxos`.
+
 ## cauldron [1.0.1] & moria [1.1.2] - 2025-08-25
 
 ### ADDED

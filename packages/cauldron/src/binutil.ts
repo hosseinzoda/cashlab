@@ -29,7 +29,23 @@ export const extractInfoFromPoolV0UnlockingBytecode = (unlocking_bytecode: Uint8
 };
 
 /**
- * Generates a PoolV0 unlocking bytecode from its parameters.
+ * Generates PoolV0 redeem script from given parameters.
+ * @param parameters `{ withdraw_pubkey_hash }`
+ * @returns unlocking bytecode
+ */
+export const buildPoolV0RedeemScriptBytecode = (parameters: PoolV0Parameters): Uint8Array => {
+  if (parameters.withdraw_pubkey_hash.length != 20) {
+    throw new ValueError('The size of parameters.withdraw_pubkey_hash should be 20 bytes');
+  }
+  return uint8ArrayConcat([
+    POOLV0_PRE_PUBKEY_BIN.slice(1), // exclude OP_PUSH
+    parameters.withdraw_pubkey_hash,
+    POOLV0_POST_PUBKEY_BIN
+  ]);
+};
+
+/**
+ * Generates a bytecode for PoolV0 exchange unlocking.
  * @param parameters `{ withdraw_pubkey_hash }`
  * @returns unlocking bytecode
  */
@@ -37,5 +53,7 @@ export const buildPoolV0UnlockingBytecode = (parameters: PoolV0Parameters): Uint
   if (parameters.withdraw_pubkey_hash.length != 20) {
     throw new ValueError('The size of parameters.withdraw_pubkey_hash should be 20 bytes');
   }
-  return uint8ArrayConcat([ POOLV0_PRE_PUBKEY_BIN, parameters.withdraw_pubkey_hash, POOLV0_POST_PUBKEY_BIN ])
+  return uint8ArrayConcat([ POOLV0_PRE_PUBKEY_BIN, parameters.withdraw_pubkey_hash, POOLV0_POST_PUBKEY_BIN ]);
 };
+
+

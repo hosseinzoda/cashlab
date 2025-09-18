@@ -34,7 +34,7 @@ export const walletTemplateP2pkhNonHd: libauth.WalletTemplate = {
     },
     unlock: {
       name: 'Unlock',
-      script: '<key.schnorr_signature.all_outputs>\n<key.public_key>',
+      script: '<key.schnorr_signature.all_outputs_all_utxos>\n<key.public_key>',
       unlocks: 'lock',
     },
   },
